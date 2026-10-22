@@ -1,0 +1,20 @@
+{
+  "name": "lceda2altium",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "立创元件 → Altium（本地 Web 应用，依赖 iconv-lite）",
+  "main": "app/server.mjs",
+  "scripts": {
+    "start": "node app/server.mjs",
+    "start:open": "node app/server.mjs --open",
+    "open": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/launch.ps1",
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/stop.ps1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.7.3"
+  }
+}

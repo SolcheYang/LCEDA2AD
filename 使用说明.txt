@@ -1,0 +1,18 @@
+LCEDA2Altium 便携版
+====================
+
+1. 双击 LCEDA2Altium.exe 启动（自带 node.exe，不需要安装 Node.js）。
+   启动后会用 Edge/Chrome 的应用窗口打开界面。
+2. 停止服务：双击“停止服务.vbs”；或运行 LCEDA2Altium.exe --stop。
+3. 可选：双击“创建桌面快捷方式.vbs”生成桌面快捷方式。
+4. 本文件夹的默认输出目录和库路径自动指向：
+      E:\EDA2Altium-exe\out
+      E:\EDA2Altium-exe\library\MyLib.SchLib
+      E:\EDA2Altium-exe\library\MyLib.PcbLib
+   不会写入原来的 E:\EDA2Altium。
+5. 运行状态与日志在：
+      %LOCALAPPDATA%\LCEDA2Altium-exe\
+   启动失败时先看 server.err.log。
+6. 需要实时控制台日志时用 run.cmd；它也会优先使用本文件夹的 node.exe。
+7. 如果把本文件夹移动到别的位置，建议在页面里改用新的库路径；
+   jobs\_lib-registry.json 里记录的是绝对路径。

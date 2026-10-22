@@ -1,0 +1,14 @@
+{
+  "E:\\EDA2Altium-exe\\library\\MyLib.SchLib": [
+    "BQ7693003DBTR",
+    "0603WAF1002T5E"
+  ],
+  "E:\\EDA2Altium-exe\\library\\MyLib.PcbLib": [
+    "TSSOP-30_L7.8-W4.4-P0.50-LS6.4-BL",
+    "R0603"
+  ],
+  "__versions": {
+    "E:\\EDA2Altium-exe\\library\\MyLib.SchLib": "LCEDA2AD-v9-p150",
+    "E:\\EDA2Altium-exe\\library\\MyLib.PcbLib": "LCEDA2AD-v9-p150"
+  }
+}
