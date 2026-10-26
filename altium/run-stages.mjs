@@ -22,7 +22,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runAltiumJob } from '../app/lib/run-altium.mjs';
-import { emitScriptJob, LIB_MARKER } from '../app/lib/emit-script-lib.mjs';
+import { emitScriptJob, LIB_MARKER_SCH, LIB_MARKER_PCB } from '../app/lib/emit-script-lib.mjs';
 import { countDocumentRecords, toAscii } from '../app/lib/emit-altium.mjs';
 import { parseSchDoc, parsePcbDoc } from '../app/lib/doc-parse.mjs';
 import { buildSchDoc, buildPcbDoc } from '../app/lib/altium-doc-writer.mjs';
@@ -153,15 +153,39 @@ function applyPinLength(pins, length) {
 /** The API model stores the footprint in mm; the document emitter works in mil. */
 function apiFootprintToMil(fp) {
   const K = 39.37007874015748;
+  // EasyEDA layer 101 (component marking, normally a pin-1 dot) is dropped:
+  // LCEDA's own Altium export omits it, and the same mark already arrives as the
+  // layer-3 silk arc. Filtering here keeps it out of the generated PcbDoc too,
+  // so the document round-trip cannot reintroduce it.
+  const keep = (item) => String(item && item.layer || '').toLowerCase() !== 'component_marking';
+  const arcs = [
+    // Real arcs (silk outlines parsed from ARC records). start/end are angles.
+    ...(fp.arcs || []).filter(keep).map((a) => ({
+      ...a, x: a.x * K, y: a.y * K, r: a.r * K, width: (a.width || 0.15) * K,
+    })),
+    // EasyEDA stores plain circles separately; a circle is a full 360-degree arc.
+    ...(fp.circles || []).filter(keep).map((c) => ({
+      layer: c.layer, x: c.x * K, y: c.y * K, r: c.r * K, start: 0, end: 360, width: (c.width || 0.15) * K,
+    })),
+  ];
   return {
     pads: (fp.pads || []).map((p) => ({
       ...p, x: p.x * K, y: p.y * K, w: p.w * K, h: p.h * K, hole: (p.hole || 0) * K,
+      // Mask expansions are millimetres in the EasyEDA model too; the emitter
+      // works in mil like every other footprint coordinate.
+      pasteExpansion: (p.pasteExpansion || 0) * K,
+      solderExpansion: (p.solderExpansion == null ? 0.0508 : p.solderExpansion) * K,
     })),
-    tracks: (fp.tracks || []).map((t) => ({
+    tracks: (fp.tracks || []).filter(keep).map((t) => ({
       ...t, x1: t.x1 * K, y1: t.y1 * K, x2: t.x2 * K, y2: t.y2 * K, width: (t.width || 0.15) * K,
     })),
-    arcs: (fp.circles || []).map((c) => ({
-      layer: c.layer, x: c.x * K, y: c.y * K, r: c.r * K, start: 0, end: 360, width: (c.width || 0.15) * K,
+    arcs,
+    // Filled SOLIDREGION polygons. The generated PcbDoc ASCII has no region-record
+    // support yet, so the library stage receives these directly from the model.
+    regions: (fp.regions || []).filter(keep).map((r) => ({
+      ...r,
+      points: (r.points || []).map(([x, y]) => [x * K, y * K]),
+      holes: (r.holes || []).map((contour) => contour.map(([x, y]) => [x * K, y * K])),
     })),
   };
 }
@@ -286,7 +310,9 @@ async function main() {
     const schParsed = parseSchDoc(schBuilt.text);
     const pcbParsed = parsePcbDoc(pcbBuilt.text);
     log('DOCS parsed source=generated sch pins=' + schParsed.stats.pins + ' rects=' + schParsed.stats.rects
-      + ' ellipses=' + schParsed.stats.ellipses + ' | pcb pads=' + pcbParsed.stats.pads
+      + ' ellipses=' + schParsed.stats.ellipses + ' arcs=' + schParsed.stats.arcs
+      + ' polylines=' + schParsed.stats.polylines + ' polygons=' + schParsed.stats.polygons
+      + ' | pcb pads=' + pcbParsed.stats.pads
       + ' tracks=' + pcbParsed.stats.tracks + ' arcs=' + pcbParsed.stats.arcs
       + ' regions=' + pcbParsed.stats.regions + ' texts=' + pcbParsed.stats.texts);
     if (schParsed.stats.pins !== wantPins) {
@@ -295,11 +321,31 @@ async function main() {
     if (pcbParsed.stats.pads !== wantPads) {
       fail('生成的 PcbDoc 焊盘数 ' + pcbParsed.stats.pads + ' 与元件模型 ' + wantPads + ' 不一致');
     }
+    // The ASCII PcbDoc record has no place for the pad mask expansions, so take
+    // them from the source model (keyed by pad number) while keeping every
+    // geometry field from the parsed document.
+    const apiPads = new Map(
+      (modelMil.footprint.pads || []).map((p) => [String(p.number), p]),
+    );
     docModel = {
       ...model,
       package: pcbParsed.pattern || model.package,
       symbol: { pins: schParsed.pins, shapes: schParsed.shapes, texts: [] },
-      footprint: { pads: pcbParsed.pads, tracks: pcbParsed.tracks, arcs: pcbParsed.arcs },
+      footprint: {
+        pads: pcbParsed.pads.map((p) => {
+          const api = apiPads.get(String(p.number));
+          return {
+            ...p,
+            pasteExpansion: api ? api.pasteExpansion : 0,
+            solderExpansion: api ? api.solderExpansion : 2,
+          };
+        }),
+        tracks: pcbParsed.tracks,
+        arcs: pcbParsed.arcs,
+        // Region records are not reproducible in the ASCII PcbDoc writer yet;
+        // carry the filled shapes over from the source model (already in mil).
+        regions: modelMil.footprint.regions || [],
+      },
     };
     docSource = 'generated-doc';
     fs.mkdirSync(path.join(ROOT, 'jobs', LCSC), { recursive: true });
@@ -318,7 +364,9 @@ async function main() {
     };
   }
   const pkg = String(docModel.package || '');
-  log('DOCS source=' + docSource + ' package=' + pkg + ' pins=' + docModel.symbol.pins.length + ' pads=' + docModel.footprint.pads.length);
+  log('DOCS source=' + docSource + ' package=' + pkg + ' pins=' + docModel.symbol.pins.length
+    + ' pads=' + docModel.footprint.pads.length
+    + ' regions=' + ((docModel.footprint.regions || []).length));
 
   if (KEEP_DOCS) {
     fs.mkdirSync(componentDir, { recursive: true });
@@ -349,9 +397,9 @@ async function main() {
   const registry = readRegistry();
   const versions = (registry.__versions && typeof registry.__versions === 'object') ? registry.__versions : {};
   const libName = toAscii(model.mpn || model.lcsc).trim() || model.lcsc;
-  const schCurrent = versions[LIB_SCH] === LIB_MARKER && fs.existsSync(LIB_SCH)
+  const schCurrent = versions[LIB_SCH] === LIB_MARKER_SCH && fs.existsSync(LIB_SCH)
     && namesPresent(LIB_SCH, [libName]).length > 0;
-  const pcbCurrent = versions[LIB_PCB] === LIB_MARKER && fs.existsSync(LIB_PCB)
+  const pcbCurrent = versions[LIB_PCB] === LIB_MARKER_PCB && fs.existsSync(LIB_PCB)
     && !!pkg && namesPresent(LIB_PCB, [pkg]).length > 0;
   log('LIB VERSION schlib=' + (versions[LIB_SCH] || '(none)') + ' current=' + schCurrent);
   log('LIB VERSION pcblib=' + (versions[LIB_PCB] || '(none)') + ' current=' + pcbCurrent);
@@ -364,6 +412,15 @@ async function main() {
   };
   log('LIB BEFORE schlib target=' + LIB_SCH + ' bytes=' + before.sch.bytes + ' comps=[' + before.sch.names.join(',') + ']');
   log('LIB BEFORE pcblib target=' + LIB_PCB + ' bytes=' + before.pcb.bytes + ' comps=[' + before.pcb.names.join(',') + ']');
+
+  // A footprint written by an older emitter has fewer primitives (no rotated pads,
+  // no NPTH holes, no silk arcs). Unlike SchLib, the PcbLib API can remove a single
+  // component, so rewrite just that component instead of silently keeping the old
+  // drawing. Without this the version marker would report "stale" but never refresh.
+  const forceStalePcb = !pcbCurrent && !!pkg && before.pcb.names.includes(pkg);
+  if (forceStalePcb) {
+    log('PCB STALE: ' + pkg + ' predates ' + LIB_MARKER_PCB + '; it will be removed and redrawn');
+  }
 
   // The SchLib API has no usable RemoveComponent. If the target already contains
   // this part but it predates the current geometry marker, replace the file only
@@ -412,6 +469,7 @@ async function main() {
     const res = await runAltiumStage(stage, docModel, stageOut, {
       schLibCurrent: schCurrent,
       pcbLibCurrent: pcbCurrent,
+      forcePcbLib: stage === 'pcblib' && forceStalePcb,
     });
     results.push(res);
     if (!res.ok) failedStage = stage;
@@ -454,11 +512,11 @@ async function main() {
   registry[LIB_PCB] = after.pcb.names;
   const schStage = results.find((r) => r.stage === 'schlib');
   if (!skipSchMerge && schStage && schStage.ok && namesPresent(LIB_SCH, [libName]).length) {
-    versions[LIB_SCH] = LIB_MARKER;
+    versions[LIB_SCH] = LIB_MARKER_SCH;
   }
   const pcbStages = results.filter((r) => r.stage === 'pcblib');
   if (pcbStages.length && pcbStages.some((r) => r.ok) && !!pkg && namesPresent(LIB_PCB, [pkg]).length) {
-    versions[LIB_PCB] = LIB_MARKER;
+    versions[LIB_PCB] = LIB_MARKER_PCB;
   }
   registry.__versions = versions;
   writeRegistry(registry);

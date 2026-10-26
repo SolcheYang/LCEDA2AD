@@ -136,6 +136,50 @@ Begin
     Target.AddSchObject(E);
 End;
 
+{ Circular schematic arc: center + radius + Altium CCW start/end angles (degrees).
+  EasyEDA's symbol A records are converted to exactly these values by the parser. }
+Procedure AddArc(Target : ISch_Component; CX, CY, R : Integer; SAngle, EAngle : Double);
+Var
+    A : ISch_Arc;
+Begin
+    A := SchServer.SchObjectFactory(eArc, eCreate_Default);
+    A.Location    := Point(MilsToCoord(CX), MilsToCoord(CY));
+    A.Radius      := MilsToCoord(R);
+    A.StartAngle  := SAngle;
+    A.EndAngle    := EAngle;
+    A.LineWidth   := eSmall;
+    A.Color       := 128; // RGB(128,0,0) in BGR TColor, same as rect/ellipse
+    A.OwnerPartId := 1;
+    A.OwnerPartDisplayMode := 0;
+    Target.AddSchObject(A);
+End;
+
+{ Pad mask (paste / solder) expansion cache. IPCB_Pad itself has no writable
+  PasteMaskExpansionMode member in DelphiScript; the scripted equivalent of the
+  Pad properties panel's "Paste Mask Override" checkbox is the TPadCache record
+  reached through Pad.Cache. Kept in its own procedure for the same safety reason
+  as AddFootprintRegions: an unknown identifier truncates only this procedure,
+  leaving pads/tracks/arcs/save/DONE intact. PasteMM = 0 keeps the design rule
+  (LCEDA's "CPE=0 / Mode=Rule"); SolderMM = 0 likewise. }
+Procedure SetPadMask(P : IPCB_Pad; PasteMM, SolderMM : Double);
+Var
+    Cache : TPadCache;
+Begin
+    If Not Assigned(P) Then Exit;
+    Cache := P.Cache;
+    If PasteMM <> 0 Then
+    Begin
+        Cache.PasteMaskExpansion      := MMsToCoord(PasteMM);
+        Cache.PasteMaskExpansionValid := eCacheManual;
+    End;
+    If SolderMM <> 0 Then
+    Begin
+        Cache.SolderMaskExpansion      := MMsToCoord(SolderMM);
+        Cache.SolderMaskExpansionValid := eCacheManual;
+    End;
+    P.Cache := Cache;
+End;
+
 { Add a schematic parameter. PValue is a WideString so the EasyEDA description /
   Value (Ω, Chinese, ±) survives; IsHidden=False makes it visible. }
 Procedure AddParameter(Target : ISch_Component; PName, PValue : WideString; PHidden : Boolean; PX, PY : Integer);
@@ -157,6 +201,22 @@ Begin
         P.ShowName      := False;
         Target.AddSchObject(P);
     End;
+End;
+
+{ Filled SOLIDREGION shapes (EasyEDA layers 5/6/7/8/12/13/14/15/99/100/101 and
+  Multi). Authoring path: PCBServer.PCBContourFactory -> IPCB_Contour.AddPoint ->
+  IPCB_Region.SetOutlineContour (all three verified in the AD26 type library).
+  Kept in a separate procedure on purpose: DelphiScript stops executing a
+  procedure at the first undeclared identifier, so if this build rejects a region
+  identifier only these shapes are skipped - pads/tracks/arcs, save and DONE run. }
+Procedure AddFootprintRegions(Target : IPCB_LibComponent);
+Var
+    Region  : IPCB_Region;
+    Contour : IPCB_Contour;
+Begin
+    W('OK regions begin solid=%%REGION_SOLID%% outline=%%REGION_OUTLINE%% skipped=%%REGION_SKIPPED%%');
+%%REGION_BODY%%
+    W('OK regions added');
 End;
 
 Procedure BuildSymbol(Target : ISch_Component);
@@ -427,7 +487,7 @@ Begin
 %%RUNJOB%%
 %%COUNTSINGLE%%
     W('COUNT schlib comps=' + IntToStr(SchComps) + ' pins=%%PINS%% libref=%%LIBNAME%% src=self-recorded+file-scan');
-    W('COUNT pcblib comps=' + IntToStr(PcbComps) + ' before=' + IntToStr(PcbBefore) + ' pads=%%PADS%% name=%%PACKAGE%% src=model+file-check');
+    W('COUNT pcblib comps=' + IntToStr(PcbComps) + ' before=' + IntToStr(PcbBefore) + ' pads=%%PADS%% regions=%%REGIONS%% skippedregions=%%SKIPPEDREGIONS%% name=%%PACKAGE%% src=model+file-check');
     W('DONE artifacts=' + IntToStr(Artifacts));
     LogTxt.Free;
 End;

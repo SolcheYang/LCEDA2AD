@@ -8,9 +8,15 @@
 // parseSchDoc(buffer) -> {
 //   libReference, partCount, description,
 //   pins:   [{ number, name, x, y, length, orient, electrical }],   // mil, lib-relative
-//   shapes: [{ kind:'rect', x1,y1,x2,y2 } | { kind:'ellipse', x,y,rx,ry }],
-//   stats:  { pins, rects, ellipses }
+//   shapes: [{ kind:'rect', x1,y1,x2,y2 }
+//          | { kind:'ellipse', x,y,rx,ry }
+//          | { kind:'arc', x,y,r,start,end }
+//          | { kind:'polyline', points:[[x,y],…] }
+//          | { kind:'polygon',  points:[[x,y],…] }],             // mil, lib-relative
+//   stats:  { pins, rects, ellipses, arcs, polylines, polygons }
 // }
+// Record ids (verified against EasyEDA Altium exports): 6=polyline, 8=ellipse,
+// 10=rectangle, 12=arc. Coordinates may carry a _FRAC field (1/100000 unit).
 //
 // UNIT NOTE (verified on C92116): SchDoc ASCII stores schematic coordinates in
 // 10-mil units. The EasyEDA model pin 1 is -600 mil; the document record is -60.
@@ -71,6 +77,15 @@ const milNum = (value, fallback = 0) => {
 
 const SCH_ELECTRICAL = ['input', 'output', 'bidirectional', 'passive', 'unspecified'];
 const SCH_MIL_PER_UNIT = 10; // SchDoc ASCII unit = 10 mil (see the note above)
+/**
+ * EasyEDA's export stores sub-unit precision beside the integer field:
+ * LOCATION.X=261 + LOCATION.X_FRAC=70000 means 261.7 units (FRAC = 1/100000).
+ */
+const schNum = (record, key) => {
+  const whole = num(record[key]);
+  const frac = record[key + '_FRAC'];
+  return frac == null ? whole : whole + num(frac) / 100000;
+};
 
 export function parseSchDoc(input) {
   const records = parseAsciiRecords(input);
@@ -116,18 +131,49 @@ export function parseSchDoc(input) {
         y2: (num(r['CORNER.Y']) - oyRaw) * SCH_MIL_PER_UNIT,
         lineWidth: num(r.LINEWIDTH, 1),
       });
-    } else if (r.RECORD === '12') {
+    } else if (r.RECORD === '6') {
+      // Polyline / closed polygon: LOCATIONCOUNT + X1,Y1 … Xn,Yn.
+      const count = Math.max(0, Math.round(num(r.LOCATIONCOUNT)));
+      const points = [];
+      for (let i = 1; i <= count; i += 1) {
+        if (r['X' + i] == null) break;
+        points.push([
+          (schNum(r, 'X' + i) - oxRaw) * SCH_MIL_PER_UNIT,
+          (schNum(r, 'Y' + i) - oyRaw) * SCH_MIL_PER_UNIT,
+        ]);
+      }
+      if (points.length >= 2) {
+        const first = points[0];
+        const last = points[points.length - 1];
+        const closed = points.length >= 4 && Math.hypot(first[0] - last[0], first[1] - last[1]) < 0.01;
+        if (closed) points.pop(); // the emitter closes polygons itself
+        shapes.push({ kind: closed ? 'polygon' : 'polyline', points, lineWidth: num(r.LINEWIDTH, 1) });
+      }
+    } else if (r.RECORD === '8') {
+      // Record 8 is an ellipse; record 12 is an arc.
       shapes.push({
         kind: 'ellipse',
-        x: (num(r['LOCATION.X']) - oxRaw) * SCH_MIL_PER_UNIT,
-        y: (num(r['LOCATION.Y']) - oyRaw) * SCH_MIL_PER_UNIT,
-        rx: num(r.RADIUS) * SCH_MIL_PER_UNIT,
-        ry: num(r.SECONDARYRADIUS) * SCH_MIL_PER_UNIT,
+        x: (schNum(r, 'LOCATION.X') - oxRaw) * SCH_MIL_PER_UNIT,
+        y: (schNum(r, 'LOCATION.Y') - oyRaw) * SCH_MIL_PER_UNIT,
+        rx: schNum(r, 'RADIUS') * SCH_MIL_PER_UNIT,
+        ry: schNum(r, 'SECONDARYRADIUS') * SCH_MIL_PER_UNIT,
+        lineWidth: num(r.LINEWIDTH, 1),
+      });
+    } else if (r.RECORD === '12') {
+      const radius = schNum(r, 'RADIUS') || schNum(r, 'SECONDARYRADIUS');
+      shapes.push({
+        kind: 'arc',
+        x: (schNum(r, 'LOCATION.X') - oxRaw) * SCH_MIL_PER_UNIT,
+        y: (schNum(r, 'LOCATION.Y') - oyRaw) * SCH_MIL_PER_UNIT,
+        r: radius * SCH_MIL_PER_UNIT,
+        start: num(r.STARTANGLE, 0),
+        end: num(r.ENDANGLE, 360),
         lineWidth: num(r.LINEWIDTH, 1),
       });
     }
   }
 
+  const countKind = (kind) => shapes.filter((s) => s.kind === kind).length;
   return {
     libReference: String(comp.LIBREFERENCE || ''),
     partCount: num(comp.PARTCOUNT, 1),
@@ -136,8 +182,11 @@ export function parseSchDoc(input) {
     shapes,
     stats: {
       pins: pins.length,
-      rects: shapes.filter((s) => s.kind === 'rect').length,
-      ellipses: shapes.filter((s) => s.kind === 'ellipse').length,
+      rects: countKind('rect'),
+      ellipses: countKind('ellipse'),
+      arcs: countKind('arc'),
+      polylines: countKind('polyline'),
+      polygons: countKind('polygon'),
     },
   };
 }
@@ -149,6 +198,13 @@ const COPPER_LAYER = {
   TOPPASTE: 'top_paste', BOTTOMPASTE: 'bottom_paste',
   TOPSOLDER: 'top_solder', BOTTOMSOLDER: 'bottom_solder',
   MULTILAYER: 'multi',
+  KEEPOUT: 'board_outline',
+  MECHANICAL2: 'document',
+  MECHANICAL4: 'top_assembly',
+  MECHANICAL5: 'bottom_assembly',
+  MECHANICAL6: 'mechanical',
+  MECHANICAL8: 'component_shape',
+  MECHANICAL9: 'lead_shape',
 };
 
 export function parsePcbDoc(input) {
@@ -182,6 +238,8 @@ export function parsePcbDoc(input) {
           layer: hole > 0 ? 'multi' : layer,
           hole,
           rotation: milNum(r.ROTATION, 0),
+          // PLATED=FALSE marks a non-plated mechanical hole (EasyEDA HOLE record).
+          plated: String(r.PLATED == null ? 'TRUE' : r.PLATED).toUpperCase() !== 'FALSE',
         });
         break;
       }

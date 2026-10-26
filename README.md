@@ -98,7 +98,9 @@ npm run stop     :: 停止服务
    - **「浏览…」**：打开 Windows 原生选择框。输出目录选文件夹；两个库选已有文件，
      或直接输入新文件名（不覆盖已有库，新库会自动创建）；
    - **常用下拉**：选择已保存的路径；「保存当前」把输入框当前值加入列表，
-     「删除」移除当前选中项。三份列表各自保存（浏览器 localStorage）。
+     「删除」移除当前选中项。三份列表以及输入框里最后使用的路径、勾选状态都保存在
+     启动器 state 目录的 `ui-prefs.json`（浏览器 localStorage 仅作兜底），
+     **关闭程序后仍然保留**。
 3. 可选勾选：
    - **保留 SchDoc / PcbDoc**
    - **生成单件 SchLib / PcbLib**
@@ -177,7 +179,7 @@ jobs\_lib-registry.json            内部版本登记表
 
 | 阶段 | 动作 |
 |---|---|
-| `pcblib` | 打开/新建目标 PcbLib，创建封装（焊盘、TopOverlay 丝印线/圆弧）；已存在则跳过；空组件自动重写 |
+| `pcblib` | 打开/新建目标 PcbLib，创建封装（焊盘+旋转、NPTH 孔、丝印/阻焊/钢网、Mechanical 6 外框、Mechanical 8 的 1 脚圆点、制造层 `SOLIDREGION` 填充区）；已存在且版本最新则跳过；旧版或空组件自动重写 |
 | `schlib` | 打开/新建目标 SchLib，创建组件（MPN、`U??`、隐藏 Comment、绑定封装、颜色 128、引脚 150mil）；已存在则跳过 |
 | `pcblib_part`* | 仅勾选「单件库」时：在 `<outDir>\<元件名>\<C>_PCB.PcbLib` 创建单件封装库 |
 | `schlib_part`* | 仅勾选「单件库」时：在 `<outDir>\<元件名>\<C>_SCH.SchLib` 创建单件符号库 |
@@ -251,6 +253,58 @@ jobs\_lib-registry.json            内部版本登记表
   - Description 优先用 EasyEDA `result.description`；为空时（如 C92116）从立创商城
     商品页的 `paramList` 生成参数摘要（`芯片类型:…;工作电压:…;`）。
   - 版本 `LCEDA2AD-v9-p150`；当前 `MyLib` 已按 v9 重建（旧 v8 备份在 `_backup\`）。
+- **v10 封装绘制补齐**（`LCEDA2AD-v10-p150`）：
+  - 焊盘旋转：读取 EasyEDA `PAD` 字段 11，写入 `Pad.Rotation`（此前 90°/270° 焊盘
+    的宽高会是反的）。
+  - 非金属化孔：`HOLE` 记录归一化为 `plated:false` 的 pad（`Pad.Plated := False`，
+    尺寸=孔径），USB-C 之类连接器的定位孔不再丢失。
+  - 丝印圆弧：`ARC` 记录按 SVG 端点参数换算出圆心/起止角写成 `Arc`（椭圆弧按 10°
+    采样成 `Track`）。
+  - 丝印矩形：`RECT` 记录展开成四条 `Track`。
+  - 层修正：底层丝印（EasyEDA layer 4）从错误的 `bottom` 铜层改为 `bottom_overlay`。
+  - 目标 PcbLib 里由旧版本生成的同名封装（注册表版本落后）会被删除并重画；
+    同一封装名不受影响的其他组件保持不动。该项改动不触碰 SchLib 版本标记
+    （当时仍为 `v9`），不会因封装改动把 SchLib 判定为过期；SchLib 的版本在本轮
+    另见下面的 v11。
+- **v11 SchLib 绘制补齐**（`LCEDA2AD-v11-p150`）：
+  - 符号折线（`PL`）、闭合多边形（`PT`/`PG`）不再丢弃；多边形按闭合轮廓绘制。
+  - 符号圆弧（`A`）写成真正的 `Arc` 对象（圆形弧）；椭圆弧按 10° 采样成折线。
+  - SchDoc 中间文档改用正确记录号：`6`=折线/闭合多边形、`8`=椭圆、`12`=圆弧；
+    旧代码把椭圆写成 `12`，部分圆弧会被误画成整椭圆。
+  - 坐标写出 `_FRAC`（1/100000 个 10mil 单位），曲线和斜线不再被取整到 10mil。
+  - SchLib 与 PcbLib 版本标记相互独立：SchLib 升到 `v11`，PcbLib 保持 `v10`。
+    目标 SchLib 已有同名组件时按原规则处理（单组件库备份重建；多组件库需手动
+    删除该组件或换用新库路径）。
+- **v12 PcbLib 全层绘制**（`LCEDA2AD-v12-p150`）：
+  - EasyEDA 封装里的**每一层**都进入模型：1/2 铜、3/4 丝印、5/6 钢网、7/8 阻焊、
+    10 外框、11 Multi、12 Document、13/14 装配、15 机械、99 元件外形、100 引脚外形、
+    101 极性标记。此前只有 1–4 层的线/弧/圆和焊盘。
+  - `SOLIDREGION` 填充多边形落到 `regions[]`，用 `IPCB_Region` 绘制（实体区）；
+    `cutout`/`npth` 以及区域内的孔按闭合 Track 轮廓绘制。
+  - 文档层落机械层，与立创官方 Altium 库一致：99→Mechanical 8、100→Mechanical 9、
+    12→Mechanical 2；13/14/15→Mechanical 4/5/6；101→Top Overlay。
+  - Multi 层的线/弧/填充区在顶层和底层各画一份（Altium 没有 Multi 图形层）。
+  - 旧版目标 PcbLib 里的同名封装会按新版本号被删除并重画。
+- **v13 与嘉立创导出的封装逐项对齐**（`LCEDA2AD-v13-p150`）：
+  - **焊盘钢网/阻焊扩边**：读 EasyEDA `PAD` 第 17/18 字段（10 mil 单位），写进
+    `Pad.Cache` 的 `PasteMaskExpansion` / `SolderMaskExpansion` +
+    `...Valid := eCacheManual`。官方库常见值 `-393.7`（⇒ `-3937 mil`，焊盘本身
+    不出钢网、钢网由 layer 5 区域提供）与 `0.2`（⇒ `2 mil`），与嘉立创导出的
+    PcbDoc 里 `PASTEMASKEXPANSION_MANUAL=-3937mil` / `SOLDERMASKEXPANSION_MANUAL=2mil`
+    一致；值为 0 时不动 Cache 的 paste 项，保持默认 Rule。
+  - **Mechanical 6 外框**：layer 99（元件外形）按导出的做法用 **2 mil** 线宽把闭合
+    轮廓画到 Mechanical 6（v14 起 Mechanical 8 不再有 layer-99 填充区）。
+  - **不再画 layer 101**：对照嘉立创导出（0603 / TQFN-36 / HC-0.8-5PWT）确认
+    component_marking 的小圆点会被导出器丢弃；pin-1 标记仍来自 layer 3 丝印弧。
+    该过滤在 `apiFootprintToMil` 里完成，生成的 PcbDoc 里也不会再出现这个圆点。
+  - 未做：导出的 PcbDoc 还带两个 Text（Designator `R?`/`U?` 与 Comment），
+    PcbLib 组件里暂未生成这两个文字对象；几何/层/扩边已对齐。
+- **v14 Mechanical 8 只保留 1 脚圆点**（`LCEDA2AD-v14-p150`）：
+  - layer 99（元件外形）不再绘制填充区，也不再画该层的线、弧、圆；
+  - Mechanical 8 上只生成**一个**约 0.15 mm 半径的实心小圆点，位置在 1 号焊盘外侧、
+    朝远离焊盘外接框中心的方向，用于在封装里识别 1 脚；
+  - Mechanical 6 的 2 mil 元件外框保持不变；
+  - 目标库里 v13 及更早写入的同名封装会按版本号自动删除并重画。
 - **直写目标库**：目标 `pcblib` / `schlib` 两阶段始终执行；`pcblib_part` /
   `schlib_part` 仅在勾选「生成单件库」时执行，写入 `<outDir>\<元件名>\`。
 - **可选中间产物**：UI 勾选 `KEEP_DOCS` / `MAKE_PART_LIBS` 控制是否保留
@@ -259,17 +313,37 @@ jobs\_lib-registry.json            内部版本登记表
   Altium `History/__Previews` 与 `.bak-时间戳`；勾选的文档/单件库保留在元件文件夹。
   失败时保留中间文件便于排查。
 - **常用路径 / 浏览（UI）**：输出目录、SchLib、PcbLib 三个路径都有各自独立的常用下拉
-  （localStorage，可保存当前/删除）与「浏览…」按钮；服务端 `POST /api/pick-path`
+  （服务端持久化到启动器 state 目录的 `ui-prefs.json`，localStorage 仅作兜底；可保存当前/删除）
+  与「浏览…」按钮；服务端 `POST /api/pick-path`
   调用 PowerShell 弹出 Windows 原生文件夹/文件选择框（库文件可选已有或输入新文件名）。
 
 ### 5.4 已知能力边界（如实说明）
 
-- 符号只重建**引脚、矩形、椭圆**。EasyEDA 模型里的折线/多边形图形会跳过，
-  日志里会打印 `skippedShapes=N`；常见 IC/电阻/电容样本未出现该情况。
+- 符号重建**引脚、矩形、椭圆、圆弧、折线、闭合多边形**（EasyEDA 的 `PT`/`PG` 都按
+  闭合多边形处理）。椭圆弧按 10° 采样成折线；符号文本框（`T`）仍未重建（探测样本
+  未出现该记录）。未知的模型图形会记入日志的 `skippedShapes=N`。
 - 符号参数（SchDoc 的 `RECORD=41`，如 SupplierPart、Datasheet）没有重建；
   库组件保留 LibReference、描述、Designator、引脚和图形。
-- 封装只重建**焊盘、TopOverlay/BottomOverlay 丝印线与圆弧**；3D Body / Mechanical
-  Region 不重建。电气焊盘与丝印完整。
+- 封装重建**除 99/101 外的每个 EasyEDA 层**：焊盘（含旋转、NPTH 孔、钢网/阻焊扩边）、
+  丝印线/圆弧/矩形、阻焊/钢网层、Multi 层图形，以及制造层 `SOLIDREGION` 填充多边形。
+  层映射：1→Top、2→Bottom、3→TopOverlay、4→BottomOverlay、5→TopPaste、6→BottomPaste、
+  7→TopSolder、8→BottomSolder、10→Keep-Out、11→Top+Bottom（Multi 图形逐层复制）、
+  12→Mechanical 2、13/14/15→Mechanical 4/5/6、100→Mechanical 9（引脚外形）。
+  99（元件外形）不画填充区/线/弧/圆，只按嘉立创规则用 **2 mil** 线宽把轮廓
+  画到 **Mechanical 6**（导出件里每个封装都有这 4 段外框线）。
+  **Mechanical 8 只保留 1 脚圆点**：一个约 0.15 mm 半径的实心小圆点，位于 1 号焊盘
+  外侧（远离焊盘外接框中心的方向）。
+  **101（极性标记）也不画**：逐个对照嘉立创导出的 PcbDoc（0603、TQFN-36、HC-0.8-5PWT）
+  确认导出器会丢弃 layer 101 的小圆点；pin-1 标记实际来自 layer 3 的丝印弧。
+  焊盘的 paste/solder 扩边取自 EasyEDA `PAD` 第 17/18 字段并写进焊盘 Cache：
+  官方库的 `-393.7`（⇒ `-3937 mil`，Manual，焊盘本身不出钢网）与 `0.2`（⇒ `2 mil`）
+  与嘉立创导出逐字段一致；`0` 表示继续用设计规则。
+  `SOLIDREGION` 的 `solid` 画成填充区，`cutout`/`npth`
+  与区域孔洞画成闭合轮廓线（layer 99 的区域除外，见上）；少于 3 点的无效区域
+  记入日志 `skippedregions=N`。
+  3D Body（`SVGNODE`）不重建。椭圆丝印弧用 10° 采样折线近似。
+  中间产物 PcbDoc 目前不写 Region 记录（PcbLib 里有完整填充区），因此单独打开
+  PcbDoc 时看不到外形/钢网填充。
 - 目标 SchLib 里已有同名组件时，程序**不会覆盖**（幂等跳过）。如果它是旧版本组件
   且目标库只含这一颗料，v5 会自动备份（`.bak-时间戳`）并重建；如果目标库还含其他元件，
   程序不会动它，会明确报错，请改用新的目标 SchLib 路径或手动删除该组件。

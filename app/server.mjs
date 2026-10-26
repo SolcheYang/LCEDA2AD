@@ -9,6 +9,7 @@
 //               SchLib / PcbLib（全程无浏览器、无 UIA、无鼠标点击）→ 打印 COUNT/DONE/RESULT。
 // 服务只做输入解析、实时搬运日志、分类失败原因、汇总产物。
 import http from 'node:http';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -33,6 +34,83 @@ const DEFAULTS = {
 };
 // altium/run-stages.mjs 从这些环境变量读输出位置；请求里的三个路径就通过它们传给管线
 const PATH_ENV = { outDir: 'OUT_DIR', schLib: 'LIB_SCH', pcbLib: 'LIB_PCB' };
+
+// ─────────────────────── UI 常用路径（服务端持久化） ───────────────────────
+// 浏览器 localStorage 会随端口/站点数据清理而丢失（便携版尤其明显），
+// 所以把「常用目录 / 常用 SchLib / 常用 PcbLib」以及上次使用的路径写到
+// 启动器同一个 state 目录；关闭程序、重启服务后仍然保留。
+const PREF_KEYS = ['outDir', 'schLib', 'pcbLib'];
+function expandEnvVars(value) {
+  return String(value).replace(/%([^%]+)%/g, (all, name) => {
+    const v = process.env[name] ?? process.env[name.toUpperCase()];
+    return v == null ? all : v;
+  });
+}
+function resolveStateDir() {
+  let dir = String(process.env.LCEDA2ALTIUM_STATE_DIR || '').trim();
+  if (!dir) {
+    try {
+      const marker = path.join(ROOT_DIR, 'state-dir.txt');
+      if (fs.existsSync(marker)) dir = fs.readFileSync(marker, 'utf8').trim();
+    } catch { /* 没有 state-dir.txt 就用下面的默认值 */ }
+  }
+  if (dir) dir = expandEnvVars(dir);
+  if (!dir) dir = path.join(process.env.LOCALAPPDATA || process.env.HOME || ROOT_DIR, 'LCEDA2Altium');
+  return path.resolve(dir);
+}
+const PREFS_FILE = path.join(resolveStateDir(), 'ui-prefs.json');
+const emptyPrefs = () => ({ paths: {}, lists: { outDir: [], schLib: [], pcbLib: [] }, options: {} });
+
+function cleanPathList(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const v = item.trim();
+    if (!v || v.length > 1024) continue;
+    const key = v.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+/** Merge a partial payload into `base`; only known keys/types are kept. */
+function cleanPrefs(input, base = emptyPrefs()) {
+  const src = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {};
+  if (src.paths && typeof src.paths === 'object') {
+    for (const key of PREF_KEYS) {
+      if (typeof src.paths[key] === 'string' && src.paths[key].trim()) {
+        base.paths[key] = src.paths[key].trim().slice(0, 1024);
+      }
+    }
+  }
+  if (src.lists && typeof src.lists === 'object') {
+    for (const key of PREF_KEYS) {
+      if (Array.isArray(src.lists[key])) base.lists[key] = cleanPathList(src.lists[key]);
+    }
+  }
+  if (src.options && typeof src.options === 'object') {
+    base.options.keepDocs = src.options.keepDocs === true;
+    base.options.makePartLibs = src.options.makePartLibs === true;
+  }
+  return base;
+}
+async function readPrefs() {
+  try {
+    return cleanPrefs(JSON.parse(await fsp.readFile(PREFS_FILE, 'utf8')));
+  } catch {
+    return emptyPrefs();
+  }
+}
+async function writePrefs(prefs) {
+  await fsp.mkdir(path.dirname(PREFS_FILE), { recursive: true });
+  const tmp = PREFS_FILE + '.tmp';
+  await fsp.writeFile(tmp, JSON.stringify(prefs, null, 2), 'utf8');
+  await fsp.rename(tmp, PREFS_FILE);
+}
 
 const SEARCH_TIMEOUT_MS = 30000;
 const DATA_TIMEOUT_MS = 60000;
@@ -726,7 +804,30 @@ function apiHealth(res) {
     busy: Boolean(activeJobId),
     // 便携版/多副本时，UI 的默认路径必须跟随本实例的根目录，而不是写死原工程路径。
     defaults: DEFAULTS,
+    prefsFile: PREFS_FILE,
   });
+}
+
+// GET /api/prefs -> 常用路径列表、上次使用的三个路径、复选框状态。
+async function apiPrefsGet(res) {
+  const prefs = await readPrefs();
+  return sendJson(res, { ok: true, prefs, defaults: DEFAULTS, file: PREFS_FILE });
+}
+
+// POST /api/prefs { prefs?: { paths?, lists?, options? } }
+// 也接受不带 prefs 包装的对象。与已保存内容合并，未提供的字段保持不变。
+async function apiPrefsPost(req, res) {
+  let body;
+  try { body = await readJsonBody(req); }
+  catch (err) { return sendJson(res, { ok: false, error: readableError(err) }); }
+  const payload = (body.prefs && typeof body.prefs === 'object') ? body.prefs : body;
+  try {
+    const next = cleanPrefs(payload, await readPrefs());
+    await writePrefs(next);
+    return sendJson(res, { ok: true, prefs: next, file: PREFS_FILE });
+  } catch (err) {
+    return sendJson(res, { ok: false, error: '保存常用路径失败：' + readableError(err) });
+  }
 }
 
 async function apiSearch(url, res) {
@@ -914,17 +1015,19 @@ async function handle(req, res) {
   const method = req.method || 'GET';
   if (method === 'GET' || method === 'HEAD') {
     if (pathname === '/api/health') return apiHealth(res);
+    if (pathname === '/api/prefs') return apiPrefsGet(res);
     if (pathname === '/api/search') return apiSearch(url, res);
     if (pathname === '/api/job') return apiJob(url, res);
     if (pathname === '/api/build') {
       return sendJson(res, { ok: false, error: '请使用 POST 调用 /api/build' });
     }
     if (pathname.startsWith('/api/')) {
-      return sendJson(res, { ok: false, error: '未知接口：' + pathname + '（可用：/api/health、/api/search、/api/build、/api/job、/api/pick-path）' });
+      return sendJson(res, { ok: false, error: '未知接口：' + pathname + '（可用：/api/health、/api/prefs、/api/search、/api/build、/api/job、/api/pick-path）' });
     }
     return serveStatic(req, res, pathname);
   }
   if (method === 'POST') {
+    if (pathname === '/api/prefs') return apiPrefsPost(req, res);
     if (pathname === '/api/pick-path') return apiPickPath(req, res);
     if (pathname === '/api/build') return apiBuild(req, res);
     if (pathname.startsWith('/api/')) {

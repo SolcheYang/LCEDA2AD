@@ -8,9 +8,36 @@ export const MIL_PER_UNIT = 10;
 const ELECTRICAL = { 0: "unspecified", 1: "passive", 2: "output", 4: "power" };
 const PAD_SHAPE = { RECT: "rect", OVAL: "round", ELLIPSE: "round", POLYGON: "octagonal" };
 const PAD_LAYER = { 1: "top", 2: "bottom", 11: "multi" };
-// layer 3 = top silk, layer 4 = bottom silk (CONTRACT has no bottom overlay -> "bottom"),
-// 1 = top copper, 2 = bottom copper. Mask/paste/generated layers (5,7,12,99,100,101) are skipped.
-const GRAPHIC_LAYER = { 1: "top", 2: "bottom", 3: "top_overlay", 4: "bottom" };
+// EasyEDA Std PCB layer ids in footprint documents (verified against easyeda2kicad's
+// layer table and the LCSC official Altium library):
+//   1 top copper, 2 bottom copper, 3 top silk, 4 bottom silk,
+//   5 top paste, 6 bottom paste, 7 top solder mask, 8 bottom solder mask,
+//   10 board outline, 11 multi-layer, 12 document, 13 top assembly,
+//   14 bottom assembly, 15 mechanical, 19 3D model,
+//   99 component shape (body), 100 lead shape, 101 component marking (polarity).
+// Every layer is carried into the model; the PcbLib emitter maps each one to the
+// closest Altium layer (see PCB_LAYER in emit-script-lib.mjs).
+const GRAPHIC_LAYER = {
+  1: "top",
+  2: "bottom",
+  3: "top_overlay",
+  4: "bottom_overlay",
+  5: "top_paste",
+  6: "bottom_paste",
+  7: "top_solder",
+  8: "bottom_solder",
+  10: "board_outline",
+  11: "multi",
+  12: "document",
+  13: "top_assembly",
+  14: "bottom_assembly",
+  15: "mechanical",
+  99: "component_shape",
+  100: "lead_shape",
+  101: "component_marking",
+};
+// EasyEDA RECT carries no stroke width; use the common 8 mil silk line.
+const RECT_WIDTH_MM = 0.2;
 
 const num = (value, fallback = 0) => {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value);
@@ -73,6 +100,23 @@ export function pathPoints(path) {
     }
   }
   return points;
+}
+
+/**
+ * Split an SVG-style path into its sub-contours. EasyEDA emits one M…Z block per
+ * contour; the first contour is the outer boundary, later ones are holes. The
+ * model keeps the outer contour in `points` and the rest in `holes`; the PcbLib
+ * emitter fills `points` and outlines each hole with closed tracks.
+ */
+export function pathContours(path) {
+  const text = String(path ?? "");
+  const chunks = text.split(/(?=[Mm])/).map((chunk) => chunk.trim()).filter(Boolean);
+  const contours = [];
+  for (const chunk of chunks) {
+    const points = pathPoints(chunk);
+    if (points.length >= 2) contours.push(points);
+  }
+  return contours;
 }
 
 function pathLength(points) {
@@ -155,10 +199,33 @@ function parseSymbolShape(record, ox, oy) {
       const points = pathPoints(fields[1]).map(([x, y]) => [mil(x - ox), mil(-(y - oy))]);
       return points.length >= 3 ? { kind: "polygon", points } : null;
     }
+    case "PG": {
+      // PG~x1 y1 x2 y2 …~stroke~stroke_width~fillstyle~fill~id~locked
+      // Same point list as PL, but the shape is closed (EasyEDA filled polygon).
+      const points = pairs(fields[1]).map(([x, y]) => [mil(x - ox), mil(-(y - oy))]);
+      return points.length >= 3 ? { kind: "polygon", points } : null;
+    }
     default:
-      // "A" (arc) and "T" (text) were never observed in any probed part; skip instead of guessing.
+      // "T" (text) was never observed in any probed part; skip instead of guessing.
       return null;
   }
+}
+
+/**
+ * EasyEDA symbol arc record:
+ *   A~M x y A rx,ry rot large sweep x2,y2~~stroke~width~fillstyle~fill~id~locked
+ * Circular arcs become `arc` shapes; elliptical ones are sampled into polylines.
+ */
+function parseSymbolArcs(record, ox, oy) {
+  const fields = record.split("~");
+  const toModel = (x, y) => [mil(x - ox), mil(-(y - oy))];
+  const parsed = svgPathToShapes(fields[1], toModel, mil);
+  const shapes = [];
+  for (const a of parsed.arcs) shapes.push({ kind: "arc", ...a });
+  for (const line of parsed.polylines) {
+    if (line.length >= 2) shapes.push({ kind: "polyline", points: line });
+  }
+  return shapes;
 }
 
 function parseSymbolDoc(doc) {
@@ -169,6 +236,8 @@ function parseSymbolDoc(doc) {
     if (record.startsWith("P~")) {
       const pin = parsePin(record, ox, oy);
       if (pin) pins.push(pin);
+    } else if (record.startsWith("A~")) {
+      shapes.push(...parseSymbolArcs(record, ox, oy));
     } else {
       const shape = parseSymbolShape(record, ox, oy);
       if (shape) shapes.push(shape);
@@ -183,6 +252,17 @@ function parsePad(record, ox, oy) {
   if (fields.length < 9) return null;
   const layerId = Math.round(num(fields[6], 1));
   const holeRadius = num(fields[9]);
+  // Field 11 is the pad's rotation in degrees (verified on C84256 / C25804).
+  // All Altium-supported pad shapes are centrally symmetric, so the y-mirror used
+  // by the model does not change the drawn orientation.
+  const rotation = ((num(fields[11]) % 360) + 360) % 360;
+  // Fields 17/18 are the paste / solder-mask expansions in EasyEDA units (10 mil).
+  // LCEDA's Altium export copies them verbatim: -393.7 becomes a manual
+  // -3937 mil paste opening (its way of saying "paste comes from the layer-5
+  // regions, not from the pad"), 0.2 becomes a manual 2 mil mask opening.
+  // Keeping them makes the generated PcbLib match the exported PcbDoc.
+  const pasteExpansion = mm(num(fields[17]));
+  const solderExpansion = mm(num(fields[18]));
   return {
     number: String(fields[8] ?? ""),
     x: mm(num(fields[2]) - ox),
@@ -192,6 +272,11 @@ function parsePad(record, ox, oy) {
     shape: PAD_SHAPE[String(fields[1] ?? "").toUpperCase()] || "rect",
     layer: PAD_LAYER[layerId] || "top",
     hole: round4(holeRadius * 2 * MM_PER_UNIT),
+    rotation: round4(rotation),
+    pasteExpansion: round4(pasteExpansion),
+    solderExpansion: round4(solderExpansion),
+    // A drilled through-hole pad is plated; a bare HOLE record becomes an NPTH pad.
+    plated: true,
   };
 }
 
@@ -223,7 +308,251 @@ function parseCircle(record, ox, oy) {
     x: mm(num(fields[1]) - ox),
     y: mm(-(num(fields[2]) - oy)),
     r: radius,
-    width: mm(num(fields[4])),
+    // A zero stroke width would make the circle invisible.
+    width: mm(num(fields[4])) || 0.15,
+  };
+}
+
+/**
+ * SVG endpoint parameterisation in EasyEDA coordinates (y down). Returns null for
+ * a degenerate arc. Radii are returned after SVG's out-of-range correction so the
+ * caller draws what the file actually means.
+ */
+function svgArcParams(x1, y1, x2, y2, rxIn, ryIn, phiDeg, largeArc, sweep) {
+  let rx = Math.abs(rxIn);
+  let ry = Math.abs(ryIn);
+  if (!(rx > 0) || !(ry > 0)) return null;
+  if (Math.hypot(x2 - x1, y2 - y1) < 1e-9) return null;
+  const phi = (phiDeg * Math.PI) / 180;
+  const cosPhi = Math.cos(phi);
+  const sinPhi = Math.sin(phi);
+  const dx = (x1 - x2) / 2;
+  const dy = (y1 - y2) / 2;
+  const x1p = cosPhi * dx + sinPhi * dy;
+  const y1p = -sinPhi * dx + cosPhi * dy;
+  const lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+  if (lambda > 1) {
+    const scale = Math.sqrt(lambda);
+    rx *= scale;
+    ry *= scale;
+  }
+  const sign = largeArc !== sweep ? 1 : -1;
+  const numerator = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
+  const denominator = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
+  if (!(denominator > 0)) return null;
+  const coef = sign * Math.sqrt(Math.max(0, numerator / denominator));
+  const cxp = coef * ((rx * y1p) / ry);
+  const cyp = coef * ((-ry * x1p) / rx);
+  const cx = cosPhi * cxp - sinPhi * cyp + (x1 + x2) / 2;
+  const cy = sinPhi * cxp + cosPhi * cyp + (y1 + y2) / 2;
+  const ux = (x1p - cxp) / rx;
+  const uy = (y1p - cyp) / ry;
+  const vx = (-x1p - cxp) / rx;
+  const vy = (-y1p - cyp) / ry;
+  const theta1 = Math.atan2(uy, ux);
+  let dtheta = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+  if (!sweep && dtheta > 0) dtheta -= 2 * Math.PI;
+  if (sweep && dtheta < 0) dtheta += 2 * Math.PI;
+  return { cx, cy, theta1, dtheta, rx, ry, phi };
+}
+
+const ARC_SAMPLE_DEG = 10;
+
+/**
+ * Walk an SVG path ("M x y A rx ry rot large sweep x y …", with L segments too).
+ * Circular arcs become {x,y,r,start,end} objects; elliptical arcs are sampled into
+ * polylines (the DelphiScript arc object has one radius per object). The caller
+ * supplies the coordinate/radius conversion, so this is shared by the PCB silk
+ * `ARC` records and the schematic `A` records.
+ */
+function svgPathToShapes(path, toModel, radiusToModel, sampleDeg = ARC_SAMPLE_DEG) {
+  const tokens = String(path || "").match(/[A-Za-z]|-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) || [];
+  const arcs = [];
+  const polylines = [];
+  let cur = null;
+  let line = null;
+  const flush = () => {
+    if (line && line.length >= 2) polylines.push(line);
+    line = null;
+  };
+  let i = 0;
+  while (i < tokens.length) {
+    const token = tokens[i];
+    if (token === "M" || token === "m") {
+      flush();
+      const relative = token === "m";
+      cur = [
+        num(tokens[i + 1]) + (relative && cur ? cur[0] : 0),
+        num(tokens[i + 2]) + (relative && cur ? cur[1] : 0),
+      ];
+      i += 3;
+    } else if (token === "L" || token === "l") {
+      const relative = token === "l";
+      const x = num(tokens[i + 1]) + (relative && cur ? cur[0] : 0);
+      const y = num(tokens[i + 2]) + (relative && cur ? cur[1] : 0);
+      if (cur) {
+        if (!line) line = [toModel(cur[0], cur[1])];
+        line.push(toModel(x, y));
+      }
+      cur = [x, y];
+      i += 3;
+    } else if (token === "A" || token === "a") {
+      const relative = token === "a";
+      const rx = num(tokens[i + 1]);
+      const ry = num(tokens[i + 2]);
+      const rotation = num(tokens[i + 3]);
+      const largeArc = num(tokens[i + 4]) ? 1 : 0;
+      const sweep = num(tokens[i + 5]) ? 1 : 0;
+      const x = num(tokens[i + 6]) + (relative && cur ? cur[0] : 0);
+      const y = num(tokens[i + 7]) + (relative && cur ? cur[1] : 0);
+      const params = cur ? svgArcParams(cur[0], cur[1], x, y, rx, ry, rotation, largeArc, sweep) : null;
+      if (params) {
+        const circular = Math.abs(params.rx - params.ry) <= Math.max(params.rx, params.ry) * 1e-6;
+        if (circular) {
+          flush();
+          const [x1, y1] = toModel(cur[0], cur[1]);
+          const [x2, y2] = toModel(x, y);
+          const [cx, cy] = toModel(params.cx, params.cy);
+          const angle = (px, py) => {
+            const deg = (Math.atan2(py - cy, px - cx) * 180) / Math.PI;
+            return round4((deg % 360 + 360) % 360);
+          };
+          let start;
+          let end;
+          if (Math.abs(params.dtheta) >= Math.PI * 2 - 1e-6) {
+            start = 0;
+            end = 360;
+          } else if (params.dtheta > 0) {
+            // EasyEDA angles grow by -y in the mirrored (y-up) model, so the same
+            // arc is traversed the other way round by Altium's CCW start/end.
+            start = angle(x2, y2);
+            end = angle(x1, y1);
+          } else {
+            start = angle(x1, y1);
+            end = angle(x2, y2);
+          }
+          arcs.push({ x: cx, y: cy, r: radiusToModel(params.rx), start, end });
+        } else {
+          if (!line) line = [toModel(cur[0], cur[1])];
+          const steps = Math.max(8, Math.ceil((Math.abs(params.dtheta) * 180) / Math.PI / sampleDeg));
+          for (let k = 1; k <= steps; k += 1) {
+            const theta = params.theta1 + (params.dtheta * k) / steps;
+            const sx = params.cx + params.rx * Math.cos(theta) * Math.cos(params.phi)
+              - params.ry * Math.sin(theta) * Math.sin(params.phi);
+            const sy = params.cy + params.rx * Math.cos(theta) * Math.sin(params.phi)
+              + params.ry * Math.sin(theta) * Math.cos(params.phi);
+            line.push(toModel(sx, sy));
+          }
+        }
+      }
+      cur = [x, y];
+      i += 8;
+    } else {
+      i += 1;
+    }
+  }
+  flush();
+  return { arcs, polylines };
+}
+
+/**
+ * PCB silk ARC records:
+ *   ARC~stroke_width~layer~net~M x,y A rx,ry rot large sweep x2,y2~id~locked
+ * Circular arcs become Arc objects; elliptical/sampled paths become tracks.
+ */
+function parseArcRecord(record, ox, oy) {
+  const fields = record.split("~");
+  const layer = GRAPHIC_LAYER[Math.round(num(fields[2], 3))];
+  const arcs = [];
+  const tracks = [];
+  if (!layer) return { arcs, tracks };
+  const width = mm(num(fields[1])) || 0.15;
+  const toModel = (x, y) => [mm(x - ox), mm(-(y - oy))];
+  const parsed = svgPathToShapes(fields[4], toModel, mm);
+  for (const a of parsed.arcs) arcs.push({ layer, ...a, width });
+  for (const line of parsed.polylines) {
+    for (let i = 1; i < line.length; i += 1) {
+      tracks.push({
+        layer,
+        x1: line[i - 1][0], y1: line[i - 1][1],
+        x2: line[i][0], y2: line[i][1],
+        width,
+      });
+    }
+  }
+  return { arcs, tracks };
+}
+
+/**
+ * RECT records (outline rectangles on silk): RECT~x~y~w~h~layer~id~locked~?~fillstyle.
+ * Emitted as four tracks so the document writer and the library emitter share one
+ * primitive set (the script API rectangle fill is not verified on this build).
+ */
+function parseRectRecord(record, ox, oy) {
+  const fields = record.split("~");
+  const layer = GRAPHIC_LAYER[Math.round(num(fields[5], 3))];
+  if (!layer) return [];
+  const x = num(fields[1]);
+  const y = num(fields[2]);
+  const w = num(fields[3]);
+  const h = num(fields[4]);
+  if (!(w > 0) || !(h > 0)) return [];
+  const corners = [
+    [mm(x - ox), mm(-(y - oy))],
+    [mm(x + w - ox), mm(-(y - oy))],
+    [mm(x + w - ox), mm(-(y + h - oy))],
+    [mm(x - ox), mm(-(y + h - oy))],
+  ];
+  const tracks = [];
+  for (let i = 0; i < 4; i += 1) {
+    const a = corners[i];
+    const b = corners[(i + 1) % 4];
+    tracks.push({ layer, x1: a[0], y1: a[1], x2: b[0], y2: b[1], width: RECT_WIDTH_MM });
+  }
+  return tracks;
+}
+
+/** HOLE records are non-plated mechanical holes: HOLE~cx~cy~radius~id~locked. */
+function parseHoleRecord(record, ox, oy) {
+  const fields = record.split("~");
+  const radius = num(fields[3]);
+  if (!(radius > 0)) return null;
+  const diameter = round4(radius * 2 * MM_PER_UNIT);
+  return {
+    number: "",
+    x: mm(num(fields[1]) - ox),
+    y: mm(-(num(fields[2]) - oy)),
+    w: diameter,
+    h: diameter,
+    shape: "round",
+    layer: "multi",
+    hole: diameter,
+    rotation: 0,
+    plated: false,
+  };
+}
+
+/**
+ * SOLIDREGION~layer~net~path~type~id~~locked
+ * A polygon on one of the footprint layers. `type` is "solid" (filled), "cutout"
+ * (negative area) or "npth" (mechanical hole outline). The model keeps `kind` so
+ * the emitter can fill solids and outline cutout/npth shapes.
+ */
+function parseSolidRegion(record, ox, oy) {
+  const fields = record.split("~");
+  const layer = GRAPHIC_LAYER[Math.round(num(fields[1]))];
+  if (!layer) return null;
+  const kind = String(fields[4] || "solid").trim().toLowerCase();
+  const contours = pathContours(fields[3]);
+  if (contours.length === 0) return null;
+  const toModel = ([x, y]) => [mm(x - ox), mm(-(y - oy))];
+  return {
+    layer,
+    kind,
+    points: contours[0].map(toModel),
+    // Additional sub-paths are holes. DelphiScript has no verified void-contour
+    // authoring call, so the emitter draws their boundary as closed tracks.
+    holes: contours.slice(1).map((contour) => contour.map(toModel)),
   };
 }
 
@@ -232,6 +561,8 @@ function parseFootprintDoc(doc) {
   const pads = [];
   const tracks = [];
   const circles = [];
+  const arcs = [];
+  const regions = [];
   for (const record of shapeRecords(doc)) {
     if (record.startsWith("PAD~")) {
       const pad = parsePad(record, ox, oy);
@@ -243,11 +574,22 @@ function parseFootprintDoc(doc) {
     else if (type === "CIRCLE") {
       const circle = parseCircle(record, ox, oy);
       if (circle) circles.push(circle);
+    } else if (type === "ARC") {
+      const parsed = parseArcRecord(record, ox, oy);
+      arcs.push(...parsed.arcs);
+      tracks.push(...parsed.tracks);
+    } else if (type === "RECT") {
+      tracks.push(...parseRectRecord(record, ox, oy));
+    } else if (type === "HOLE") {
+      const hole = parseHoleRecord(record, ox, oy);
+      if (hole) pads.push(hole);
+    } else if (type === "SOLIDREGION") {
+      const region = parseSolidRegion(record, ox, oy);
+      if (region) regions.push(region);
     }
-    // ARC / SOLIDREGION / SVGNODE: CONTRACT §1 has no field for them (regions 99/100/101 are
-    // generated decoration, SVGNODE is the 3D placeholder) -> ignored on purpose.
+    // SVGNODE is the 3D placeholder -> ignored on purpose.
   }
-  return { pads, tracks, circles };
+  return { pads, tracks, circles, arcs, regions };
 }
 
 function docOf(node) {

@@ -17,10 +17,26 @@ import { validatePas, toAscii } from './emit-altium.mjs';
 
 const DEFAULT_ALTIUM_EXE = 'E:\\AD\\AD\\X2.EXE';
 const KNOWN_STEPS = ['schlib_part', 'schlib', 'pcblib_part', 'pcblib'];
-// Bump this whenever the generated SchLib geometry changes. It is written into
-// the component description so the pipeline can tell an old library component
-// (no marker) from a current one and replace it instead of idempotent-skipping.
-export const LIB_MARKER = 'LCEDA2AD-v9-p' + (process.env.PIN_LENGTH_MIL || 150);
+// Bump these whenever the generated library geometry changes. The pipeline records
+// them per target library in jobs/_lib-registry.json, so it can tell a component
+// written by an older emitter from a current one and redraw instead of skipping.
+// They are independent: a PcbLib-only change must not invalidate every SchLib.
+// v11 (SCH): polylines, closed polygons, symbol arcs, correct ellipse record (8)
+// and fractional SchDoc coordinates. v12 (PCB): every EasyEDA footprint layer is
+// drawn - solder mask/paste/graphics plus filled SOLIDREGION shapes (body -> M8,
+// lead -> M9, document -> M2, marking -> silk). v13 (PCB): match LCEDA's own
+// Altium export exactly - pad paste/solder-mask expansions, the Mechanical 6
+// body outline derived from the layer-99 region, and layer 101 (component
+// marking) is no longer drawn because the exporter drops it. v10 (PCB): pad
+// rotation, NPTH mounting holes, silk arcs/rectangles, bottom silk no longer
+// lands on bottom copper. v14 (PCB): Mechanical 8 carries only a small pin-1
+// orientation dot - the filled layer-99 body shapes and every other
+// component_shape primitive are no longer drawn.
+const PIN_SUFFIX = '-p' + (process.env.PIN_LENGTH_MIL || 150);
+export const LIB_MARKER_SCH = 'LCEDA2AD-v11' + PIN_SUFFIX;
+export const LIB_MARKER_PCB = 'LCEDA2AD-v14' + PIN_SUFFIX;
+// Kept for callers that predate the split; it tracks the PCB library.
+export const LIB_MARKER = LIB_MARKER_PCB;
 // Visible Value is placed just beyond the lower-right corner of the whole symbol
 // (body + pin tips) and uses TopLeft justification, so the text extends away from
 // the component instead of overlapping it.
@@ -46,14 +62,73 @@ function num(value) {
 }
 
 const PAD_SHAPE = { round: 'eRounded', rect: 'eRectangular', octagonal: 'eOctagonal' };
+// EasyEDA footprint layer -> Altium layer. Manufacturing layers keep their real
+// Altium meaning (silk/mask/paste/copper). EasyEDA's documentation layers are
+// parked on mechanical layers, following the LCSC official Altium library:
+//   100 lead shape -> Mechanical 9, 12 document -> Mechanical 2.
+// Layer 99 (component shape) is NOT drawn as filled regions: the PcbLib only
+// needs a small pin-1 orientation dot on Mechanical 8, emitted below.
+// 101 (component marking, usually a tiny pin-1 dot) is also not drawn.
 const PCB_LAYER = {
   top: 'eTopLayer', bottom: 'eBottomLayer', multi: 'eMultiLayer',
   top_overlay: 'eTopOverlay', bottom_overlay: 'eBottomOverlay',
   top_paste: 'eTopPaste', bottom_paste: 'eBottomPaste',
   top_solder: 'eTopSolder', bottom_solder: 'eBottomSolder',
+  board_outline: 'eKeepOutLayer',
+  document: 'eMechanical2',
+  top_assembly: 'eMechanical4',
+  bottom_assembly: 'eMechanical5',
+  mechanical: 'eMechanical6',
+  component_shape: 'eMechanical8',
+  lead_shape: 'eMechanical9',
 };
+const SKIP_LAYER = (layer) => String(layer || '').toLowerCase() === 'component_marking';
+const isComponentShape = (layer) => String(layer || '').toLowerCase() === 'component_shape';
+// Mechanical 8 carries exactly one small pin-1 dot (no filled body shapes).
+// Radius 6 mil = 0.152 mm; the dot sits 6 mil clear of pad 1's outer edge, on
+// the side facing away from the pad bounding-box centre.
+const PIN1_DOT_RADIUS_MIL = 6;
+const PIN1_DOT_GAP_MIL = 6;
+const PIN1_DOT_SEGMENTS = 16;
+// Graphics on EasyEDA's MULTI layer show on every copper layer. Altium has no
+// multi-layer track/arc/region, so draw them once on each outer copper layer.
+const GRAPHIC_LAYERS = (layer) => (String(layer || '').toLowerCase() === 'multi' ? ['top', 'bottom'] : [layer]);
+// LCEDA's export outlines the body (EasyEDA layer 99) with 2 mil tracks on
+// Mechanical 6. Mechanical 8 itself only carries the pin-1 dot.
+const LCEDA_BODY_OUTLINE_WIDTH_MIL = 2;
+// EasyEDA PAD field 18 is 0.2 units (2 mil) on every official LCSC footprint
+// inspected; use it when the field is absent.
+const LCEDA_SOLDER_MASK_MIL = 2;
 const padShape = (s) => PAD_SHAPE[String(s || '').toLowerCase()] || 'eRectangular';
 const pcbLayer = (l) => PCB_LAYER[String(l || '').toLowerCase()] || 'eTopLayer';
+
+/**
+ * Centre of the Mechanical 8 pin-1 dot, in mil.
+ * Pad 1 is found by its designator ("1"); a footprint without one falls back to
+ * the first pad. The dot is pushed outward from the centre of the pad bounding
+ * box, just past the pad edge, so it stays beside the pin instead of under it.
+ */
+export function pin1Dot(model) {
+  const fp = model.footprint || {};
+  const pads = (fp.pads || []).filter((p) => Number(p.w) > 0 && Number(p.h) > 0);
+  if (!pads.length) return null;
+  const pad = pads.find((p) => String(p.number) === '1') || pads[0];
+  const xs = pads.map((p) => Number(p.x) || 0);
+  const ys = pads.map((p) => Number(p.y) || 0);
+  const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
+  let dx = (Number(pad.x) || 0) - centerX;
+  let dy = (Number(pad.y) || 0) - centerY;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) { dx = -1; dy = 0; } else { dx /= len; dy /= len; }
+  const half = Math.max(Number(pad.w) || 0, Number(pad.h) || 0) / 2;
+  const distance = half + PIN1_DOT_GAP_MIL + PIN1_DOT_RADIUS_MIL;
+  return {
+    x: (Number(pad.x) || 0) + dx * distance,
+    y: (Number(pad.y) || 0) + dy * distance,
+    r: PIN1_DOT_RADIUS_MIL,
+  };
+}
 
 /**
  * SchLib Pin.Location is the point where the pin meets the body, and
@@ -96,6 +171,31 @@ function symbolBBox(shapes, pins) {
       add((Number(sh.x) || 0) + rx, (Number(sh.y) || 0) + ry);
     } else if (kind === 'polyline' || kind === 'polygon') {
       for (const p of sh.points || []) add(p[0], p[1]);
+    } else if (kind === 'arc') {
+      // Only the swept part counts, so a large left-side arc does not push the
+      // visible Value far past the symbol's right edge.
+      const cx = Number(sh.x) || 0;
+      const cy = Number(sh.y) || 0;
+      const r = Math.max(Number(sh.r) || 0, Number(sh.rx) || 0, Number(sh.ry) || 0);
+      if (r > 0) {
+        const start = Number(sh.start) || 0;
+        const end = sh.end == null ? 360 : Number(sh.end);
+        let span = end - start;
+        if (span <= 0) span += 360;
+        if (span >= 360 - 1e-6) {
+          add(cx - r, cy - r); add(cx + r, cy + r);
+        } else {
+          const at = (deg) => {
+            const rad = (deg * Math.PI) / 180;
+            add(cx + r * Math.cos(rad), cy + r * Math.sin(rad));
+          };
+          at(start); at(end);
+          for (const cardinal of [0, 90, 180, 270]) {
+            const delta = ((cardinal - start) % 360 + 360) % 360;
+            if (delta <= span + 1e-9) at(cardinal);
+          }
+        }
+      }
     }
   }
   // Pin tips stick out beyond the body; include them so the Value never lands on
@@ -143,8 +243,18 @@ export function buildSymbolBody(model, lcsc) {
       out.push('    AddEllipse(Target, ' + [sh.x, sh.y, sh.rx, sh.ry].map(int).join(', ') + ');');
     } else if (kind === 'polyline' || kind === 'polygon') {
       const pts = Array.isArray(sh.points) ? sh.points : [];
-      for (let i = 0; i + 1 < pts.length; i++) {
-        out.push('    AddLine(Target, ' + [pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]].map(int).join(', ') + ');');
+      const closed = kind === 'polygon' && pts.length >= 3;
+      const segments = closed ? pts.length : pts.length - 1;
+      for (let i = 0; i < segments; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % pts.length];
+        out.push('    AddLine(Target, ' + [a[0], a[1], b[0], b[1]].map(int).join(', ') + ');');
+      }
+    } else if (kind === 'arc') {
+      const r = Number(sh.r) || Math.max(Number(sh.rx) || 0, Number(sh.ry) || 0);
+      if (r > 0) {
+        out.push('    AddArc(Target, ' + [sh.x, sh.y, r].map(int).join(', ') + ', '
+          + num(sh.start == null ? 0 : sh.start) + ', ' + num(sh.end == null ? 360 : sh.end) + ');');
       }
     }
   }
@@ -162,43 +272,215 @@ export function buildFootprintBody(model, owner) {
   const fp = model.footprint || {};
   const out = [];
   for (const pad of fp.pads || []) {
+    const w = Number(pad.w) || 0;
+    const h = Number(pad.h) || 0;
+    if (!(w > 0) || !(h > 0)) continue; // degenerate pad: nothing to draw
+    const rotation = ((Number(pad.rotation) || 0) % 360 + 360) % 360;
     out.push(
       '        Pad := PCBServer.PCBObjectFactory(ePadObject, eNoDimension, eCreate_Default);',
       '        Pad.Mode     := ePadMode_Simple;',
       '        Pad.Layer    := ' + pcbLayer(pad.layer) + ';',
       '        Pad.TopShape := ' + padShape(pad.shape) + ';',
-      '        Pad.TopXSize := MMsToCoord(' + num(mm(pad.w)) + ');',
-      '        Pad.TopYSize := MMsToCoord(' + num(mm(pad.h)) + ');',
+      '        Pad.TopXSize := MMsToCoord(' + num(mm(w)) + ');',
+      '        Pad.TopYSize := MMsToCoord(' + num(mm(h)) + ');',
       '        Pad.X        := MMsToCoord(' + num(mm(pad.x)) + ');',
       '        Pad.Y        := MMsToCoord(' + num(mm(pad.y)) + ');',
       '        Pad.Name     := ' + quote(pad.number) + ';',
       '        Pad.HoleSize := MMsToCoord(' + num(mm(pad.hole)) + ');',
+    );
+    // EasyEDA PAD field 11 carries the pad rotation; without it a 90-degree QFN
+    // pad is drawn with its width and height swapped.
+    if (rotation !== 0) out.push('        Pad.Rotation := ' + num(rotation) + ';');
+    // HOLE records become pads with plated copper removed (NPTH mechanical holes).
+    if (pad.plated === false) out.push('        Pad.Plated   := False;');
+    // Pad mask expansions, copied from the EasyEDA PAD fields exactly as LCEDA's
+    // Altium export does it. A non-zero paste value (normally -393.7 units =
+    // -3937 mil) means "no paste from the pad": the paste comes from the
+    // layer-5 regions instead. A zero value leaves the normal rule in charge.
+    // SetPadMask() is a template-level helper because IPCB_Pad has no writable
+    // PasteMaskExpansionMode in DelphiScript; the values go through Pad.Cache.
+    const pasteExpansion = Number(pad.pasteExpansion) || 0;
+    const solderExpansion = Number.isFinite(Number(pad.solderExpansion))
+      ? Number(pad.solderExpansion) : LCEDA_SOLDER_MASK_MIL;
+    out.push(
+      '        SetPadMask(Pad, ' + num(pasteExpansion / MIL_PER_MM) + ', '
+        + num(solderExpansion / MIL_PER_MM) + ');',
       '        ' + owner + '.AddPCBObject(Pad);',
     );
   }
   for (const trk of fp.tracks || []) {
-    out.push(
-      '        Trk := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);',
-      '        Trk.Layer := ' + pcbLayer(trk.layer) + ';',
-      '        Trk.Width := MMsToCoord(' + num(mm(trk.width == null ? 0.15 : trk.width)) + ');',
-      '        Trk.X1    := MMsToCoord(' + num(mm(trk.x1)) + ');',
-      '        Trk.Y1    := MMsToCoord(' + num(mm(trk.y1)) + ');',
-      '        Trk.X2    := MMsToCoord(' + num(mm(trk.x2)) + ');',
-      '        Trk.Y2    := MMsToCoord(' + num(mm(trk.y2)) + ');',
-      '        ' + owner + '.AddPCBObject(Trk);',
-    );
+    if (SKIP_LAYER(trk.layer) || isComponentShape(trk.layer)) continue;
+    if (Number(trk.x1) === Number(trk.x2) && Number(trk.y1) === Number(trk.y2)) continue;
+    for (const layer of GRAPHIC_LAYERS(trk.layer)) {
+      out.push(
+        '        Trk := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);',
+        '        Trk.Layer := ' + pcbLayer(layer) + ';',
+        '        Trk.Width := MMsToCoord(' + num(mm(trk.width == null ? 0.15 : trk.width)) + ');',
+        '        Trk.X1    := MMsToCoord(' + num(mm(trk.x1)) + ');',
+        '        Trk.Y1    := MMsToCoord(' + num(mm(trk.y1)) + ');',
+        '        Trk.X2    := MMsToCoord(' + num(mm(trk.x2)) + ');',
+        '        Trk.Y2    := MMsToCoord(' + num(mm(trk.y2)) + ');',
+        '        ' + owner + '.AddPCBObject(Trk);',
+      );
+    }
   }
-  for (const arc of fp.arcs || []) {
+  // Circles are full 360-degree arcs. The parsed document model keeps them in
+  // fp.arcs already, but a raw EasyEDA model still has fp.circles, so accept both.
+  const arcs = [];
+  const arcKeys = new Set();
+  const addArc = (a) => {
+    const key = [a.layer, a.x, a.y, a.r, a.start, a.end].join('|');
+    if (arcKeys.has(key)) return;
+    arcKeys.add(key);
+    arcs.push(a);
+  };
+  for (const a of fp.arcs || []) addArc(a);
+  for (const c of fp.circles || []) {
+    addArc({ layer: c.layer, x: c.x, y: c.y, r: c.r, start: 0, end: 360, width: c.width });
+  }
+  for (const arc of arcs) {
+    if (SKIP_LAYER(arc.layer) || isComponentShape(arc.layer)) continue;
+    if (!(Number(arc.r) > 0)) continue;
+    for (const layer of GRAPHIC_LAYERS(arc.layer)) {
+      out.push(
+        '        Arc := PCBServer.PCBObjectFactory(eArcObject, eNoDimension, eCreate_Default);',
+        '        Arc.Layer      := ' + pcbLayer(layer) + ';',
+        '        Arc.LineWidth  := MMsToCoord(' + num(mm(arc.width == null ? 0.15 : arc.width)) + ');',
+        '        Arc.XCenter    := MMsToCoord(' + num(mm(arc.x)) + ');',
+        '        Arc.YCenter    := MMsToCoord(' + num(mm(arc.y)) + ');',
+        '        Arc.Radius     := MMsToCoord(' + num(mm(arc.r)) + ');',
+        '        Arc.StartAngle := ' + num(arc.start == null ? 0 : arc.start) + ';',
+        '        Arc.EndAngle   := ' + num(arc.end == null ? 360 : arc.end) + ';',
+        '        ' + owner + '.AddPCBObject(Arc);',
+      );
+    }
+  }
+  // LCEDA's Altium export adds the body contour (the layer-99 region) as a
+  // closed 2 mil outline on Mechanical 6. The filled layer-99 shape is not
+  // drawn on Mechanical 8 any more - that layer only carries the pin-1 dot.
+  // Without this outline the library would be missing the visible component
+  // outline that the exported PcbDoc carries.
+  const addMechanicalOutline = (points) => {
+    if (!Array.isArray(points) || points.length < 3) return;
+    for (let i = 0; i < points.length; i += 1) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      if (Number(a[0]) === Number(b[0]) && Number(a[1]) === Number(b[1])) continue;
+      out.push(
+        '        Trk := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);',
+        '        Trk.Layer := eMechanical6;',
+        '        Trk.Width := MMsToCoord(' + num(mm(LCEDA_BODY_OUTLINE_WIDTH_MIL)) + ');',
+        '        Trk.X1    := MMsToCoord(' + num(mm(a[0])) + ');',
+        '        Trk.Y1    := MMsToCoord(' + num(mm(a[1])) + ');',
+        '        Trk.X2    := MMsToCoord(' + num(mm(b[0])) + ');',
+        '        Trk.Y2    := MMsToCoord(' + num(mm(b[1])) + ');',
+        '        ' + owner + '.AddPCBObject(Trk);',
+      );
+    }
+  };
+  for (const region of fp.regions || []) {
+    if (String(region.layer || '').toLowerCase() !== 'component_shape') continue;
+    if (String(region.kind || 'solid').toLowerCase() !== 'solid') continue;
+    addMechanicalOutline(region.points);
+  }
+  // Filled polygons and the Mechanical 8 pin-1 dot live in their own procedure:
+  // if this build's scripting engine rejects any region identifier, only that
+  // procedure stops (the pads, tracks and arcs above, the save, and DONE still
+  // run). See buildRegionBody.
+  if ((fp.regions || []).length || pin1Dot(model)) out.push('        AddFootprintRegions(' + owner + ');');
+  return out.join('\n');
+}
+
+/**
+ * Body of AddFootprintRegions: EasyEDA SOLIDREGION -> IPCB_Region.
+ * Authoring path: PCBServer.PCBContourFactory gives an empty IPCB_Contour;
+ * fill it with AddPoint, hand it to Region.SetOutlineContour. Only `solid`
+ * regions are filled; cutout/npth regions are drawn as closed track outlines.
+ */
+export function buildRegionBody(model) {
+  const fp = model.footprint || {};
+  const out = [];
+  // A closed contour drawn with the already-verified Track API. Used for
+  // cutout/npth regions and for region holes: their area must stay unfilled.
+  const addOutline = (points, layer) => {
+    for (let i = 0; i < points.length; i += 1) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      if (Number(a[0]) === Number(b[0]) && Number(a[1]) === Number(b[1])) continue;
+      out.push(
+        '    Trk := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);',
+        '    Trk.Layer := ' + pcbLayer(layer) + ';',
+        '    Trk.Width := MMsToCoord(0.15);',
+        '    Trk.X1    := MMsToCoord(' + num(mm(a[0])) + ');',
+        '    Trk.Y1    := MMsToCoord(' + num(mm(a[1])) + ');',
+        '    Trk.X2    := MMsToCoord(' + num(mm(b[0])) + ');',
+        '    Trk.Y2    := MMsToCoord(' + num(mm(b[1])) + ');',
+        '    Target.AddPCBObject(Trk);',
+      );
+    }
+  };
+  for (const region of fp.regions || []) {
+    if (SKIP_LAYER(region.layer) || isComponentShape(region.layer)) continue;
+    const points = Array.isArray(region.points) ? region.points : [];
+    if (points.length < 3) continue;
+    const kind = String(region.kind || 'solid').toLowerCase();
+    for (const layer of GRAPHIC_LAYERS(region.layer)) {
+      if (kind !== 'solid') {
+        // cutout / npth: outline only, matching EasyEDA's own rendering.
+        addOutline(points, layer);
+        continue;
+      }
+      out.push(
+        '    Contour := PCBServer.PCBContourFactory;',
+        '    If Assigned(Contour) Then',
+        '    Begin',
+        '        Contour.Clear;',
+        '        Region := PCBServer.PCBObjectFactory(eRegionObject, eNoDimension, eCreate_Default);',
+        '        If Assigned(Region) Then',
+        '        Begin',
+        '            Region.Layer := ' + pcbLayer(layer) + ';',
+      );
+      for (const p of points) {
+        out.push('            Contour.AddPoint(MMsToCoord(' + num(mm(p[0])) + '), MMsToCoord(' + num(mm(p[1])) + '));');
+      }
+      out.push(
+        '            Region.SetOutlineContour(Contour);',
+        '            Target.AddPCBObject(Region);',
+        '        End;',
+        '    End;',
+      );
+      // Sub-contours are holes: draw their boundary so the void is visible.
+      for (const hole of region.holes || []) {
+        if (Array.isArray(hole) && hole.length >= 3) addOutline(hole, layer);
+      }
+    }
+  }
+  // Mechanical 8 is deliberately minimal: one small filled dot beside pad 1.
+  // It is a 16-sided polygon region (the API's only filled-shape primitive here)
+  // and is the sole object emitted on that layer.
+  const dot = pin1Dot(model);
+  if (dot) {
     out.push(
-      '        Arc := PCBServer.PCBObjectFactory(eArcObject, eNoDimension, eCreate_Default);',
-      '        Arc.Layer      := ' + pcbLayer(arc.layer) + ';',
-      '        Arc.LineWidth  := MMsToCoord(' + num(mm(arc.width == null ? 0.15 : arc.width)) + ');',
-      '        Arc.XCenter    := MMsToCoord(' + num(mm(arc.x)) + ');',
-      '        Arc.YCenter    := MMsToCoord(' + num(mm(arc.y)) + ');',
-      '        Arc.Radius     := MMsToCoord(' + num(mm(arc.r)) + ');',
-      '        Arc.StartAngle := ' + num(arc.start == null ? 0 : arc.start) + ';',
-      '        Arc.EndAngle   := ' + num(arc.end == null ? 360 : arc.end) + ';',
-      '        ' + owner + '.AddPCBObject(Arc);',
+      '    Contour := PCBServer.PCBContourFactory;',
+      '    If Assigned(Contour) Then',
+      '    Begin',
+      '        Contour.Clear;',
+      '        Region := PCBServer.PCBObjectFactory(eRegionObject, eNoDimension, eCreate_Default);',
+      '        If Assigned(Region) Then',
+      '        Begin',
+      '            Region.Layer := eMechanical8;',
+    );
+    for (let i = 0; i < PIN1_DOT_SEGMENTS; i += 1) {
+      const angle = (i / PIN1_DOT_SEGMENTS) * Math.PI * 2;
+      const px = dot.x + Math.cos(angle) * dot.r;
+      const py = dot.y + Math.sin(angle) * dot.r;
+      out.push('            Contour.AddPoint(MMsToCoord(' + num(mm(px)) + '), MMsToCoord(' + num(mm(py)) + '));');
+    }
+    out.push(
+      '            Region.SetOutlineContour(Contour);',
+      '            Target.AddPCBObject(Region);',
+      '        End;',
+      '    End;',
     );
   }
   return out.join('\n');
@@ -248,6 +530,11 @@ export async function emitScriptJob(model, opts = {}) {
 
   const pkg = String(model.package || lcsc);
   const libName = toAscii(model.mpn || lcsc).trim() || lcsc;
+  const fpRegions = (model.footprint && model.footprint.regions) || [];
+  const validRegions = fpRegions.filter((r) => Array.isArray(r.points) && r.points.length >= 3);
+  const solidRegionCount = validRegions.filter((r) => String(r.kind || 'solid').toLowerCase() === 'solid').length;
+  const outlineRegionCount = validRegions.length - solidRegionCount;
+  const skippedRegionCount = fpRegions.length - validRegions.length;
   const flags = {
     schLibExists: fs.existsSync(schLibPath),
     pcbLibExists: fs.existsSync(pcbLibPath),
@@ -274,6 +561,7 @@ export async function emitScriptJob(model, opts = {}) {
     LOG: pasEsc(paths.logPath),
     BUILD_SYMBOL: buildSymbolBody(model, lcsc),
     FOOTPRINT_LIB: buildFootprintBody(model, 'PComp'),
+    REGION_BODY: buildRegionBody(model),
     RUNJOB: runJobLines.join('\r\n'),
     PARTSCHLIB: pasEsc(paths.partSchLibPath),
     PARTPCBLIB: pasEsc(paths.partPcbLibPath),
@@ -282,11 +570,16 @@ export async function emitScriptJob(model, opts = {}) {
         ? "    W('COUNT single schlib comps=' + IntToStr(PartSchComps) + ' pins=" + (Array.isArray(pins) ? pins.length : 0) + " libref=" + pasEsc(libName) + " src=script-api');"
         : '',
       steps.indexOf('pcblib_part') >= 0
-        ? "    W('COUNT single pcblib comps=' + IntToStr(PartPcbComps) + ' pads=" + (Array.isArray(pads) ? pads.length : 0) + " name=" + pasEsc(pkg) + " src=model+file-check');"
+        ? "    W('COUNT single pcblib comps=' + IntToStr(PartPcbComps) + ' pads=" + (Array.isArray(pads) ? pads.length : 0) + " regions=" + validRegions.length + " skippedregions=" + skippedRegionCount + " name=" + pasEsc(pkg) + " src=model+file-check');"
         : '',
     ].filter(Boolean).join('\r\n'),
     PINS: String(pins.length),
     PADS: String(pads.length),
+    REGIONS: String(validRegions.length),
+    SKIPPEDREGIONS: String(skippedRegionCount),
+    REGION_SOLID: String(solidRegionCount),
+    REGION_OUTLINE: String(outlineRegionCount),
+    REGION_SKIPPED: String(skippedRegionCount),
     SCHLIB_EXISTS: flags.schLibExists ? 'True' : 'False',
     SCHLIB_HAS: (opts.schLibCurrent === true ? true : flags.schLibHasComp) ? 'True' : 'False',
     PCBLIB_EXISTS: flags.pcbLibExists ? 'True' : 'False',
@@ -341,4 +634,4 @@ export async function emitScriptJob(model, opts = {}) {
   };
 }
 
-export default { emitScriptJob, buildSymbolBody, buildFootprintBody };
+export default { emitScriptJob, buildSymbolBody, buildFootprintBody, buildRegionBody };

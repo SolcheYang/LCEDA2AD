@@ -90,10 +90,13 @@ const DIALOG_PS = [
   '}',
   '"@',
   'Add-Type -AssemblyName System.Drawing',
-  '$p = Get-Process X2 -ErrorAction SilentlyContinue',
-  'if (-not $p) { Write-Output "NOPROC"; exit }',
+  '$procs = @(Get-Process X2 -ErrorAction SilentlyContinue)',
+  'if ($procs.Count -eq 0) { Write-Output "NOPROC"; exit }',
   '$i = 0',
-  'foreach ($d in [ADlg]::Find([uint32]$p.Id, "TMessageForm")) {',
+  // A second Altium instance from an earlier probe must not break diagnostics:
+  // Get-Process then returns an array and $p.Id is Object[], not UInt32.
+  'foreach ($proc in $procs) {',
+  'foreach ($d in [ADlg]::Find([uint32]$proc.Id, "TMessageForm")) {',
   '  $parts = [ADlg]::Size($d).Split("x")',
   '  $w = [int]$parts[0]; $h = [int]$parts[1]',
   '  if ($w -le 0 -or $h -le 0) { continue }',
@@ -108,6 +111,7 @@ const DIALOG_PS = [
   '  $bmp.Dispose()',
   '  Write-Output ("DIALOG " + $file)',
   '  $i++',
+  '}',
   '}',
   'if ($i -eq 0) { Write-Output "NODIALOG" }',
 ].join('\r\n');

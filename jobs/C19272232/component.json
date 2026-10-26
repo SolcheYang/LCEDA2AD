@@ -1,0 +1,812 @@
+{
+  "lcsc": "C19272232",
+  "mpn": "BQ25756RRVR",
+  "manufacturer": "TI(德州仪器)",
+  "package": "TQFN-36_L6.0-W5.0-P0.50-BL-EP-1",
+  "description": "",
+  "value": "",
+  "datasheet": "",
+  "symbol": {
+    "pins": [
+      {
+        "number": "1",
+        "name": "SCL",
+        "x": -700,
+        "y": 850,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "2",
+        "name": "SDA",
+        "x": -700,
+        "y": 750,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "3",
+        "name": "INT#",
+        "x": -700,
+        "y": 650,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "4",
+        "name": "STAT1",
+        "x": -700,
+        "y": 550,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "5",
+        "name": "STAT2",
+        "x": -700,
+        "y": 450,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "6",
+        "name": "PG#",
+        "x": -700,
+        "y": 350,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "7",
+        "name": "CE#",
+        "x": -700,
+        "y": 250,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "8",
+        "name": "TS",
+        "x": -700,
+        "y": 150,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "9",
+        "name": "ICHG",
+        "x": -700,
+        "y": 50,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "10",
+        "name": "ILIM_HIZ",
+        "x": -700,
+        "y": -50,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "11",
+        "name": "FBG",
+        "x": -700,
+        "y": -150,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "12",
+        "name": "FB",
+        "x": -700,
+        "y": -250,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "13",
+        "name": "SRN",
+        "x": -700,
+        "y": -350,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "14",
+        "name": "SRP",
+        "x": -700,
+        "y": -450,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "15",
+        "name": "NC",
+        "x": -700,
+        "y": -550,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "16",
+        "name": "NC",
+        "x": -700,
+        "y": -650,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "17",
+        "name": "PGND",
+        "x": -700,
+        "y": -750,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "18",
+        "name": "SW2",
+        "x": -700,
+        "y": -850,
+        "orient": 0,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "19",
+        "name": "HIDRV2",
+        "x": 700,
+        "y": -850,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "20",
+        "name": "BTST2",
+        "x": 700,
+        "y": -750,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "21",
+        "name": "LODRV2",
+        "x": 700,
+        "y": -650,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "22",
+        "name": "PGND",
+        "x": 700,
+        "y": -550,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "23",
+        "name": "DRV_SUP",
+        "x": 700,
+        "y": -450,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "24",
+        "name": "REGN",
+        "x": 700,
+        "y": -350,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "25",
+        "name": "LODRV1",
+        "x": 700,
+        "y": -250,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "26",
+        "name": "BTST1",
+        "x": 700,
+        "y": -150,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "27",
+        "name": "HIDRV1",
+        "x": 700,
+        "y": -50,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "28",
+        "name": "SW1",
+        "x": 700,
+        "y": 50,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "29",
+        "name": "ACN",
+        "x": 700,
+        "y": 150,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "30",
+        "name": "ACP",
+        "x": 700,
+        "y": 250,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "31",
+        "name": "NC",
+        "x": 700,
+        "y": 350,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "32",
+        "name": "VAC",
+        "x": 700,
+        "y": 450,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "33",
+        "name": "VAC",
+        "x": 700,
+        "y": 550,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "34",
+        "name": "ACUV",
+        "x": 700,
+        "y": 650,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "35",
+        "name": "ACOV",
+        "x": 700,
+        "y": 750,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "36",
+        "name": "FSW_SYNC",
+        "x": 700,
+        "y": 850,
+        "orient": 180,
+        "length": 100,
+        "electrical": "unspecified"
+      },
+      {
+        "number": "37",
+        "name": "PGND",
+        "x": 0,
+        "y": -1050,
+        "orient": 90,
+        "length": 100,
+        "electrical": "unspecified"
+      }
+    ],
+    "shapes": [
+      {
+        "kind": "rect",
+        "x1": -600,
+        "y1": -950,
+        "x2": 600,
+        "y2": 950
+      },
+      {
+        "kind": "ellipse",
+        "x": -550,
+        "y": 900,
+        "rx": 15,
+        "ry": 15
+      }
+    ],
+    "texts": []
+  },
+  "footprint": {
+    "pads": [
+      {
+        "number": "37",
+        "x": 0,
+        "y": -0.0001,
+        "w": 3.5,
+        "h": 4.5,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "36",
+        "x": -3,
+        "y": -1.7502,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "35",
+        "x": -3,
+        "y": -1.2501,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "34",
+        "x": -3,
+        "y": -0.7502,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "33",
+        "x": -3,
+        "y": -0.2501,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "32",
+        "x": -3,
+        "y": 0.2498,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "31",
+        "x": -3,
+        "y": 0.7499,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "30",
+        "x": -3,
+        "y": 1.2498,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "29",
+        "x": -3,
+        "y": 1.7499,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "28",
+        "x": -2.2499,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "27",
+        "x": -1.7501,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "26",
+        "x": -1.2499,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "25",
+        "x": -0.7501,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "24",
+        "x": -0.2499,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "23",
+        "x": 0.2499,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "22",
+        "x": 0.7501,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "21",
+        "x": 1.2499,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "20",
+        "x": 1.7498,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "19",
+        "x": 2.2499,
+        "y": 2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "18",
+        "x": 3,
+        "y": 1.7499,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "17",
+        "x": 3,
+        "y": 1.2498,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "16",
+        "x": 3,
+        "y": 0.7499,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "15",
+        "x": 3,
+        "y": 0.2498,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "14",
+        "x": 3,
+        "y": -0.2501,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "13",
+        "x": 3,
+        "y": -0.7502,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "12",
+        "x": 3,
+        "y": -1.2501,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "11",
+        "x": 3,
+        "y": -1.7502,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "10",
+        "x": 2.2499,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "9",
+        "x": 1.7501,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "8",
+        "x": 1.2499,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "7",
+        "x": 0.7501,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "6",
+        "x": 0.2499,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "5",
+        "x": -0.2499,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "4",
+        "x": -0.7501,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "3",
+        "x": -1.2499,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "2",
+        "x": -1.7501,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      },
+      {
+        "number": "1",
+        "x": -2.2499,
+        "y": -2.5,
+        "w": 0.3,
+        "h": 0.7,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0
+      }
+    ],
+    "tracks": [
+      {
+        "layer": "top_overlay",
+        "x1": -3.0001,
+        "y1": 2.4999,
+        "x2": -2.6312,
+        "y2": 2.4999,
+        "width": 0.254
+      },
+      {
+        "layer": "top_overlay",
+        "x1": 2.631,
+        "y1": 2.4999,
+        "x2": 2.9999,
+        "y2": 2.4999,
+        "width": 0.254
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -3.0001,
+        "y1": -2.5001,
+        "x2": -2.6312,
+        "y2": -2.5001,
+        "width": 0.254
+      },
+      {
+        "layer": "top_overlay",
+        "x1": 2.6311,
+        "y1": -2.5001,
+        "x2": 2.9999,
+        "y2": -2.5001,
+        "width": 0.254
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -3.0001,
+        "y1": 2.4999,
+        "x2": -3.0001,
+        "y2": 2.1311,
+        "width": 0.254
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -3.0001,
+        "y1": -2.1312,
+        "x2": -3.0001,
+        "y2": -2.5001,
+        "width": 0.254
+      },
+      {
+        "layer": "top_overlay",
+        "x1": 2.9999,
+        "y1": -2.5001,
+        "x2": 2.9999,
+        "y2": -2.1312,
+        "width": 0.254
+      },
+      {
+        "layer": "top_overlay",
+        "x1": 2.9999,
+        "y1": 2.1311,
+        "x2": 2.9999,
+        "y2": 2.4999,
+        "width": 0.254
+      }
+    ],
+    "circles": [
+      {
+        "layer": "top_overlay",
+        "x": -3,
+        "y": -3.0001,
+        "r": 0.1501,
+        "width": 0.3
+      }
+    ]
+  }
+}

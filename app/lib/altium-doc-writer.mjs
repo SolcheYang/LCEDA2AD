@@ -31,6 +31,15 @@ const PCB_LAYER = {
   top_overlay: 'TOPOVERLAY', bottom_overlay: 'BOTTOMOVERLAY',
   top_paste: 'TOPPASTE', bottom_paste: 'BOTTOMPASTE',
   top_solder: 'TOPSOLDER', bottom_solder: 'BOTTOMSOLDER',
+  // EasyEDA documentation layers (same Altium slots as the LCSC official library).
+  board_outline: 'KEEPOUT',
+  document: 'MECHANICAL2',
+  top_assembly: 'MECHANICAL4',
+  bottom_assembly: 'MECHANICAL5',
+  mechanical: 'MECHANICAL6',
+  component_shape: 'MECHANICAL8',
+  lead_shape: 'MECHANICAL9',
+  component_marking: 'TOPOVERLAY',
 };
 
 function ascii(value) {
@@ -45,9 +54,31 @@ function du(value) {
   const n = Math.round((num(value) / 10) * 1e4) / 1e4;
   return String(n);
 }
+/**
+ * mil -> { whole, frac } in SchDoc 10-mil units. EasyEDA's own export writes
+ * coordinates as an integer field plus a _FRAC field in 1/100000 of a unit
+ * (e.g. LOCATION.X=261|LOCATION.X_FRAC=70000 == 261.7 units).
+ */
+function unitParts(milValue) {
+  const units = num(milValue) / 10;
+  let whole = Math.trunc(units);
+  let frac = Math.round((units - whole) * 100000);
+  if (frac >= 100000) { whole += 1; frac = 0; }
+  else if (frac <= -100000) { whole -= 1; frac = 0; }
+  return { whole, frac };
+}
+/** "|PREFIX=whole|PREFIX_FRAC=frac" (the FRAC field is omitted when zero). */
+function unitField(prefix, milValue) {
+  const { whole, frac } = unitParts(milValue);
+  return '|' + prefix + '=' + whole + (frac === 0 ? '' : '|' + prefix + '_FRAC=' + frac);
+}
 /** mil -> "1234.5600mil" */
 function mil(value) {
   return (Math.round(num(value) * 1e4) / 1e4).toFixed(4) + 'mil';
+}
+/** Altium angles are written as plain degrees (135.5, 360, …). */
+function angleText(value) {
+  return String(Math.round(num(value) * 1000) / 1000);
 }
 function readTemplate(file, fallback) {
   try { return fs.readFileSync(file, 'latin1').trim(); } catch { return fallback; }
@@ -55,9 +86,11 @@ function readTemplate(file, fallback) {
 
 /**
  * Build a valid Altium Schematic ASCII document (Version 5.0).
- * Only the primitives the EasyEDA model can express are written: pins, rectangle,
- * ellipse. Polyline/polygon shapes are counted in skippedShapes (the library stage
- * has the same limitation, so the documents and libraries stay consistent).
+ * Record ids follow the EasyEDA Altium export (verified against exported files):
+ *   6 = polyline (also used for closed polygons), 8 = ellipse,
+ *   10 = rectangle, 12 = arc, 2 = pin.
+ * Coordinates use the exporter's integer + _FRAC (1/100000 unit) form so curves
+ * keep sub-unit precision.
  */
 export function buildSchDoc(model) {
   const ox = SCH_ORIGIN.x;
@@ -98,10 +131,30 @@ export function buildSchDoc(model) {
         + '|CORNER.X=' + du(ox * 10 + x2) + '|CORNER.Y=' + du(oy * 10 + y2)
         + '|CORNERXRADIUS=0|CORNERYRADIUS=0|TRANSPARENT=F|LINEWIDTH=1|COLOR=128|LINESTYLE=0');
     } else if (kind === 'ellipse') {
+      // Record 8 is the ellipse; record 12 is an arc (the old writer used 12 for
+      // ellipses, which only looked right for full 0–360 circles).
+      recs.push('|RECORD=8|OWNERINDEX=1|OWNERPARTID=1|ISNOTACCESIBLE=T|INDEXINSHEET=' + (indexInSheet++)
+        + unitField('LOCATION.X', ox * 10 + num(sh.x)) + unitField('LOCATION.Y', oy * 10 + num(sh.y))
+        + unitField('RADIUS', num(sh.rx)) + unitField('SECONDARYRADIUS', num(sh.ry))
+        + '|LINEWIDTH=1|COLOR=128|LINESTYLE=0|TRANSPARENT=F');
+    } else if (kind === 'arc') {
+      const r = num(sh.r) || Math.max(num(sh.rx), num(sh.ry));
       recs.push('|RECORD=12|OWNERINDEX=1|OWNERPARTID=1|ISNOTACCESIBLE=T|INDEXINSHEET=' + (indexInSheet++)
-        + '|LOCATION.X=' + du(ox * 10 + num(sh.x)) + '|LOCATION.Y=' + du(oy * 10 + num(sh.y))
-        + '|RADIUS=' + du(num(sh.rx)) + '|RADIUS_FRAC=0|SECONDARYRADIUS=' + du(num(sh.ry))
-        + '|SECONDARYRADIUS_FRAC=0|STARTANGLE=0|ENDANGLE=360|LINEWIDTH=1|COLOR=128|LINESTYLE=0');
+        + unitField('LOCATION.X', ox * 10 + num(sh.x)) + unitField('LOCATION.Y', oy * 10 + num(sh.y))
+        + unitField('RADIUS', r) + unitField('SECONDARYRADIUS', r)
+        + '|STARTANGLE=' + angleText(sh.start) + '|ENDANGLE=' + angleText(sh.end == null ? 360 : sh.end)
+        + '|LINEWIDTH=1|COLOR=128|LINESTYLE=0');
+    } else if (kind === 'polyline' || kind === 'polygon') {
+      const pts = (Array.isArray(sh.points) ? sh.points : []).map((p) => [num(p[0]), num(p[1])]);
+      if (pts.length < 2) { skippedShapes++; continue; }
+      // EasyEDA closes a polygon by repeating the first vertex in the record.
+      if (kind === 'polygon' && pts.length >= 3) pts.push(pts[0]);
+      let line = '|RECORD=6|OWNERINDEX=1|OWNERPARTID=1|ISNOTACCESIBLE=T|INDEXINSHEET=' + (indexInSheet++)
+        + '|LINEWIDTH=1|COLOR=128|LINESTYLE=0|LOCATIONCOUNT=' + pts.length;
+      pts.forEach(([x, y], i) => {
+        line += unitField('X' + (i + 1), ox * 10 + x) + unitField('Y' + (i + 1), oy * 10 + y);
+      });
+      recs.push(line + '|STARTLINESHAPE=0|ENDLINESHAPE=0');
     } else {
       skippedShapes++;
     }
@@ -151,9 +204,21 @@ export function buildPcbDoc(model) {
   const fp = model.footprint || {};
   const pads = fp.pads || [];
   const tracks = fp.tracks || [];
-  const arcs = fp.arcs || (fp.circles || []).map((c) => ({
-    layer: c.layer, x: c.x, y: c.y, r: c.r, start: 0, end: 360, width: c.width,
-  }));
+  // Circles are full 360-degree arcs; combine both sources. The dedupe key keeps a
+  // caller that already folded circles into arcs from drawing them twice.
+  const arcs = [];
+  const arcKeys = new Set();
+  const addArc = (a) => {
+    const key = [a.layer, a.x, a.y, a.r, a.start == null ? 0 : a.start, a.end == null ? 360 : a.end]
+      .map((v) => (typeof v === 'number' ? v.toFixed(4) : String(v))).join('|');
+    if (arcKeys.has(key)) return;
+    arcKeys.add(key);
+    arcs.push(a);
+  };
+  for (const a of fp.arcs || []) addArc(a);
+  for (const c of fp.circles || []) {
+    addArc({ layer: c.layer, x: c.x, y: c.y, r: c.r, start: 0, end: 360, width: c.width });
+  }
   const ox = PCB_ORIGIN.x;
   const oy = PCB_ORIGIN.y;
   const recs = [];
@@ -169,7 +234,8 @@ export function buildPcbDoc(model) {
     const layer = PCB_LAYER[String(pad.layer || 'top').toLowerCase()] || 'TOP';
     recs.push('|RECORD=Pad|COMPONENT=0|LAYER=' + layer
       + '|NAME=' + ascii(pad.number)
-      + '|HOLESIZE=' + mil(hole) + '|PLATED=TRUE|PINLENGTH=0mil|LOCKED=FALSE'
+      + '|HOLESIZE=' + mil(hole) + '|PLATED=' + (pad.plated === false ? 'FALSE' : 'TRUE')
+      + '|PINLENGTH=0mil|LOCKED=FALSE'
       + '|ROTATION=' + num(pad.rotation) + '|HOLETYPE=' + (hole > 0 ? 1 : 0)
       + '|HOLEWIDTH=0mil|HOLEROTATION=0|PADXOFFSET0=0mil|PADYOFFSET0=0mil'
       + '|X=' + mil(ox + num(pad.x)) + '|Y=' + mil(oy + num(pad.y))

@@ -688,3 +688,198 @@ DelphiScript 的常量/成员名在 Altium DLL 里有字符串符号，先查再
      `E:\EDA2Altium-exe\library\MyLib.PcbLib`。
 37.5 验证：临时库 C92116 → C25804 连续两次 `RESULT: PASS`（不重启 Altium）；
    旧 v8 SchLib 备份在 `_backup\`；`out` 为空。
+
+## 38. 2026-10-23 v10：PcbLib 绘制补齐（旋转焊盘 / NPTH / 丝印弧与矩形 / 底层丝印层修正）
+
+38.1 EasyEDA `PAD` 第 11 字段是焊盘旋转角（实测 C84256=180、C5034=270、C25804=0）；
+   此前 `parsePad` 未读取、`buildFootprintBody` 也未写 `Pad.Rotation`，90°/270° 焊盘的
+   TopXSize/TopYSize 会画反。
+38.2 `HOLE` 记录（`HOLE~cx~cy~radius~id~locked`）是非金属化定位孔；此前完全丢弃
+   （C2765186 USB-C 的 2 个 0.7mm 定位孔缺失）。现归一化为 `plated:false` 的 pad：
+   `Pad.Plated := False`、尺寸=孔径、层=multi。`Plated` 属性名已在 Advpcb.dll
+   符号表确认（`GetProperty_Plated/SetProperty_Plated`）。
+38.3 `ARC` 记录（`ARC~width~layer~net~M x,y A rx,ry rot large sweep x,y~…`）是丝印圆弧
+   （C2894294 的圆形电容外框）。现按 SVG 端点参数换算成圆心 + Altium 起止角；
+   椭圆弧按 10° 采样为 Track。方向规则：EasyEDA 角度在 y-up 镜像模型里取反，
+   故 `dtheta>0` 时 Altium 的 start/end 需交换。
+38.4 `RECT` 记录（`RECT~x~y~w~h~layer~…`）无独立 stroke 宽度，展开为 0.2mm 的四条 Track。
+38.5 层映射修正：EasyEDA layer 4 是底层丝印，旧映射成 `bottom`（底层铜），
+   会画出“假铜线”；现改为 `bottom_overlay`（layer 3 仍为 `top_overlay`）。
+38.6 `doc-parse.parsePcbDoc` 读取 `PLATED`，`buildPcbDoc` 写出 `PLATED=FALSE`，
+   保证 NPTH 标记经过「生成文档 → 回读 → 写库」整条链不丢。
+38.7 版本标记拆分（避免 PCB 改动连带 SchLib 被判过期）：
+   `LIB_MARKER_SCH = LCEDA2AD-v9-p150`（SchLib 几何未变）、
+   `LIB_MARKER_PCB = LCEDA2AD-v10-p150`（本次封装绘制变更）。
+   `run-stages.mjs` 对两个库分别取版本；目标 PcbLib 中同名封装存在但版本落后时，
+   传 `forcePcbLib` 让脚本先 `RemoveComponent` 再重画，否则新绘制永远进不了已有目标库；
+   其它组件不受影响（SchLib 侧仍按原逻辑，不会因本次改动触发替换）。
+38.8 离线校验（未启动 Altium）：
+   - C2765186：16 pad + 2 NPTH = 18，回读 18；2 条 `Pad.Plated := False`/阶段；
+   - C2894294：2 条 silk ARC，回读 3（含 1 个 CIRCLE），生成 3 个 Arc/阶段；
+   - C84256：2 个旋转 180° 焊盘；C5034：3 个旋转 270° + 1 弧 + 3 个 RECT→12 Track；
+   - 所有生成的 job.pas 通过 `validatePas`。
+38.9 待真机：关闭 Altium 未保存文档后跑 C2765186 / C2894294，确认 PADCHECK 与
+   `RESULT: PASS`（本轮只做离线与文档级验证）。
+
+## 39. 2026-10-23 v11：SchLib 绘制补齐（折线/多边形/圆弧/椭圆记录/小数坐标）
+
+证据来源（只读）：回收站与 `_legacy` 里 19 个 EasyEDA Altium 导出的 ASCII `.schdoc`，
+以及 `E:\GroundRes\...\*.SchLib` 的 OLE `Data` 流。实测记录号：
+  6 = 折线（`LOCATIONCOUNT` + `Xn/Yn`，可选 `Xn_FRAC`/`Yn_FRAC`）
+  8 = 椭圆（`LOCATION.X/Y`、`RADIUS`、`SECONDARYRADIUS`）
+  10 = 矩形
+  12 = 圆弧（`RADIUS`、`STARTANGLE`、`ENDANGLE`）
+  2 = 引脚
+39.1 旧实现的两个缺陷：
+  (a) `buildSchDoc` 只写 10/12，且把**椭圆**写成 `RECORD=12`（真正的圆弧记录）。
+      圆形（0..360）碰巧对，部分圆弧会被画成整椭圆；`RECORD=8` 椭圆从未写过。
+  (b) `parseSchDoc` 只读 10/12，PL/PT/PG/A 全部丢失。由于管线把生成的 SchDoc 再
+      解析回来写 SchLib，C84256（LED 的 3 个 PT + 3 个 PL）、C318884（5 个 PL）
+      等符号进库后只剩引脚/椭圆，图形缺失。
+39.2 现在：
+  - `easyeda/parse.mjs`：`parseSymbolShape` 支持 `PG`；`parseSymbolArcs` 复用
+    `svgPathToShapes` 处理 `A`（圆形→`arc`，椭圆→10° 采样 `polyline`）。
+    `svgPathToShapes` 同时供 PCB 丝印 `ARC` 使用（原先的解析逻辑抽出复用）。
+  - `altium-doc-writer.mjs`：写出 6/8/12，坐标用整数 + `_FRAC`（1/100000 单位），
+    多边形闭合（重复首点），与导出文件逐字段一致（颜色仍用既有 128）。
+  - `doc-parse.mjs`：读 6/8/12；首尾重合的 6 判为 `polygon` 并去重末点。
+  - `emit-script-lib.mjs`：`polygon` 补最后一段闭合线；新增 `AddArc` 调用；
+    `symbolBBox` 计入圆弧。
+  - `template-script.pas`：新增 `AddArc`（`eArc` + `Location/Radius/StartAngle/
+    EndAngle`，与 SchLib `RECORD=12` 字段一致）。
+  - `LIB_MARKER_SCH` 升到 `LCEDA2AD-v11-p150`；PCB 仍为 v10。
+39.3 角度校准：C48935391（47uF 电容）源 `A~M19.44,6.9 A10,10 0 0 1 19.53,-7.03`，
+   EasyEDA 自己的导出写成 `STARTANGLE=135.5|ENDANGLE=223.8`；本实现算得
+   135.482/223.778（源坐标 4 位小数取整造成 0.02° 偏差）。方向约定正确。
+39.4 离线校验（未启动 Altium，7 个真实元件）：
+   C25804 rect；C84256 3 多边形 + 3 折线；C318884 5 折线 + 2 椭圆；
+   C19272232 rect + 椭圆（RECORD=8）；C72043 3 PG + 3 PL；
+   C14258 4 条椭圆弧采样；C48935391 1 圆弧 + 5 折线。
+   全部 `skippedShapes=0`，生成脚本通过 `validatePas`；DOC_ONLY 管线 PASS。
+39.5 未做：符号文本框 `T`（探测样本未出现）、多子件（`subparts`）仍合并到第 1 单元。
+   真机复验仍需关闭未保存文档后跑一次完整管线。
+
+## 40. 2026-10-25 v12：PcbLib 全层绘制（SOLIDREGION + 文档层）
+
+40.1 需求：PcbLib 必须把 EasyEDA 封装的**每一层**都画出来。此前只画焊盘与
+   EasyEDA 层 1–4 的线/弧/圆，`SOLIDREGION`（层 5/7/12/99/100/101）全部丢弃，
+   与立创官方 Altium 库里的成品封装相比缺元件外形/引脚外形/钢网等图形。
+40.2 层编号语义（来源：easyeda2kicad 1.0.1 `easyeda_svg_renderer.py` 的
+   `_LAYER_COLORS` / `parameters_kicad_footprint.py` 的 `KI_LAYERS`，均实测/文档确认）：
+   1 TopLayer / 2 BottomLayer / 3 TopSilk / 4 BottomSilk / 5 TopPasteMask /
+   6 BottomPasteMask / 7 TopSolderMask / 8 BottomSolderMask / 10 BoardOutLine /
+   11 Multi-Layer / 12 Document / 13 TopAssembly / 14 BottomAssembly /
+   15 Mechanical / 19 3DModel / 99 ComponentShape / 100 LeadShape / 101 ComponentMarking。
+40.3 官方库落层证据（只读 `E:\GroundRes\...\GroundRes.PcbLib` 的 OLE Data 流，
+   统计 `V7_LAYER=` 区域记录）：
+   - R0603/C0805：`99→MECHANICAL8`、`100→MECHANICAL9`、`5→TOPPASTE`；
+   - TSSOP-30/LQFP-176：`7→MECHANICAL7`（阻焊以机械层记录）、`99→M8`、`100→M9`；
+   - CAP-SMD/二极管系列：`12→MECHANICAL2`、`3→TOPOVERLAY`；
+   - MSOP-8/SOIC-8/USB-C 是另一套导出约定（`99→M11`、`100→M12`、`7→M10`、
+     12→M9），本实现选择语义层 + 官方 A 套机械层，见 40.4。
+40.4 本实现映射（`PCB_LAYER`，emit-script-lib.mjs）：
+   1→eTopLayer、2→eBottomLayer、3→eTopOverlay、4→eBottomOverlay、
+   5→eTopPaste、6→eBottomPaste、7→eTopSolder、8→eBottomSolder、
+   10→eKeepOutLayer、11→顶/底各一份、12→eMechanical2、13→eMechanical4、
+   14→eMechanical5、15→eMechanical6、99→eMechanical8、100→eMechanical9、
+   101→eTopOverlay。
+40.5 实现：
+   - `easyeda/parse.mjs`：`GRAPHIC_LAYER` 覆盖所有层；新增 `parseSolidRegion`
+     （`SOLIDREGION~layer~net~path~kind~id`，path 用 `pathPoints` 解析），
+     输出 `footprint.regions[{layer,kind,points,holes}]`；`pathContours` 负责拆子轮廓。
+   - `altium-doc-writer.mjs` / `doc-parse.mjs`：新层的 Track/Arc 可写可回读；
+     PcbDoc ASCII 暂不写 Region 记录（格式未复刻），`run-stages.mjs` 在解析后把
+     模型的 `regions[]` 注入 docModel。
+   - `emit-script-lib.mjs`：`buildRegionBody` 生成独立的 `AddFootprintRegions`
+     过程；实体区用 `PCBServer.PCBContourFactory` -> `IPCB_Contour.AddPoint` ->
+     `IPCB_Region.SetOutlineContour`，
+     cutout/npth/孔用闭合 Track 轮廓。独立过程是安全设计：DelphiScript 在遇到
+     未声明标识符时只截断当前过程，不会连带焊盘/保存/DONE。
+   - 版本标记 `LIB_MARKER_PCB = LCEDA2AD-v12-p150`（SchLib 仍 v11）。
+40.6 API 证据（本机只读）：
+   - `Altium.SDK.Interfaces.dll` 反射：`IPCB_Contour.AddPoint(Int32,Int32)`、
+     `IPCB_Region.SetOutlineContour(Object)`、`IPCB_Region.Internal_GetMainContour`；
+   - `EditScript.dll` / `Advpcb.dll` 符号表含 `eRegionObject`、`SetOutlineContour`、
+     `MainContour`；层常量 `eMechanical1..16`、`eKeepOutLayer` 见官方 KB。
+     造轮廓用 `PCBServer.PCBContourFactory`（.NET SDK 的 `Internal_PCBContourFactory`
+     去掉统一前缀；脚本名 `PCBContourFactory`）。旧 2005 版 RTL 文档里的
+     `MainContour: Pgpc_vertex_list` 已过时，AD26 是 `IPCB_Contour`。
+40.7 离线校验（未启动 Altium；`node verify`）：
+   C25804 5 区（2 L5→TopPaste、2 L100→M9、1 L99→M8）；
+   C84256 6 区（3 L12→M2）；C19272232 75 区（37 TopPaste + 37 M9 + 1 M8）；
+   C92116 61 区（30 实体 + 30 cutout 轮廓 + 1 M8）；
+   C2765186 17 区 + 4 个 Multi 焊盘；全部 job.pas 通过 `validatePas`；
+   `DOC_ONLY=1` 跑 C5034 通过（pcb 文档回读 tracks=15 arcs=5 regions=0 注入 3）。
+40.8 待真机：region API 首次真实运行。看 job.log 的
+   `OK regions begin solid=… outline=… skipped=…` 与紧随其后的 `OK regions added`；
+   若缺少后者，说明本机脚本引擎不认该过程里的某个标识符（过程被截断，
+   作业仍会完成，但填充区缺失）。
+
+## 41. 2026-10-25 v13：封装与嘉立创导出逐项对齐
+
+41.1 用户要求：`E:\EDA2Altium-exe` 生成的封装必须与**嘉立创导出的**相同。
+   取真导出件（只读比对）：
+   - `E:\GroundRes\Hardware\ADpro\Circle_CONN\Altium_0603WAF1002T5E_2026-10-25.zip`
+     解压后的 `0603WAF1002T5E.pcbdoc`（C25804 / R0603）；
+   - `E:\GroundRes\Hardware\ADpro\Component\TQFN-36_L6.0-W5.0-P0.50-BL-EP-1.pcbdoc`
+     （C19272232）；
+   - `E:\GroundRes\Hardware\ADpro\Circle_CONN\Altium_HC-0.8-5PWT_2026-10-25\...pcbdoc`
+     （C2845346）。
+41.2 逐记录比对结论（导出 PcbDoc vs EasyEDA packageDetail）：
+   - 焊盘尺寸/位置/旋转（含 90/180/270）与 EasyEDA `PAD` 字段完全一致；
+   - 导出件每个焊盘都带缓存的扩边：
+     `PASTEMASKEXPANSION_MANUAL=-3937mil` / `CPE=-3937mil`（源字段 17=-393.7 单位）
+     且 `SOLDERMASKEXPANSION_MANUAL=2mil`（源字段 18=0.2）；字段 17=0 的封装
+     （HC-0.8-5PWT）则是 `PASTEMASKEXPANSIONMODE=Rule` / `CPE=0mil`。v12 完全没写
+     这两个值 ⇒ 钢网/阻焊与导出件不同。
+   - 导出件把 layer 99（元件外形）的轮廓用 **2 mil** 宽的 4 段 Track 画到
+     **MECHANICAL6**，同时保留 M8 填充区；v12 只有 M8 区。
+   - 导出件**丢弃 layer 101** 的 `CIRCLE`（三个样本都如此：0603 / TQFN-36 /
+     HC-0.8-5PWT），pin-1 标记来自 layer 3 的丝印圆/弧。v12 把 101 当 silk
+     画出来 ⇒ 多一个极小的圆。
+   - 导出件另有两段 Text：Designator=`c_para.pre`（`R?`/`U?`/`CN?`）在元件原点，
+     Comment=Value（0603=`10kΩ`；HC 的 Value 为空但导出显示 MPN；TQFN 为空）。
+     本版**未实现**这两个文字对象。
+41.3 实现（`LCEDA2AD-v13-p150`）：
+   - `easyeda/parse.mjs`：`parsePad` 增加 `pasteExpansion` / `solderExpansion`
+     （字段 17/18 × 0.254，mm）。
+   - `run-stages.mjs`：`apiFootprintToMil` 转换两个扩边值；过滤 layer 101；
+     解析回读的 PcbDoc 焊盘按编号补回扩边（ASCII PcbDoc 没有这个字段）。
+   - `emit-script-lib.mjs`：焊盘调用模板里的 `SetPadMask(Pad, PasteMM, SolderMM)`；
+     该过程用 `TPadCache`（`PasteMaskExpansion` / `SolderMaskExpansion` + `...Valid`）
+     写 `Pad.Cache`。`pasteExpansion=0` 时不动 paste 缓存（=从规则），非 0 用
+     `eCacheManual`；独立过程保证标识符不被本机认时只丢扩边，焊盘照常生成。layer 99 区域轮廓补画 2 mil M6 Track；
+     `SKIP_LAYER` 丢弃 component_marking。
+   - `template-script.pas`：声明 `PadCache : TPadCache;`。
+41.4 API 证据：Altium DXP RTL Reference（tr0126）PadCache 示例
+   `Padcache := Via.Cache; Padcache.SolderMaskExpansion := ...;
+   Padcache.SolderMaskExpansionValid := eCacheManual; ... Via.Cache := Padcache;`
+   `Advpcb.dll` 符号表含 `TPadCache`、`PasteMaskExpansionValid`、
+   `SolderMaskExpansionValid`、`eCacheManual`。
+   注意：`IPCB_Pad` **没有** `PasteMaskExpansionMode` 这个 DelphiScript 成员；
+   用 `eMaskExpansionMode_Manual` 会让脚本停在该语句（第一次实测：日志停在
+   `OK pcblib component registered` 之后再无输出）。
+41.5 离线校验（未跑 Altium）：
+   - C25804：5 区 / 2 焊盘；job.pas 含 8 处 `eCacheManual`（4 次 footprint 块 ×2），
+     8 处 `eMechanical6`（4 段 ×2），无 `component_marking`；
+   - C19272232：75 区 / 37 焊盘；148 处 `eCacheManual` / 0 处 invalid；
+   - C2845346：8 区 / 7 焊盘；14 `Manual`（只设 solder；paste=0 不动缓存）；
+   - `DOC_ONLY=1` 的 C25804 PcbDoc：arcs 由 1 变 0（101 圆点不再写入）。
+41.6 真机结果（2026-10-25，AD 26.7.1）：
+   - 前置：用户正在用的 Altium（PID 22464）不接收脚本。必须**另起一个普通实例**
+     （Start-Process X2.EXE，等主窗口出现），再把脚本命令行递给它；此时
+     `-RScriptingSystem` 才会执行。脚本报错后该实例的脚本引擎会卡住，
+     后续换一个 .PrjScr 也不再执行 —— 只能杀掉该实例重开（只杀自己启动的 PID）。
+     这也解释了为什么 41.6 之前"命令成功但无日志"。
+   - 生成（C25804 → out_verify\V.PcbLib）：RESULT 全 OK，`DONE artifacts=1`，
+     `comps=1 pads=2 regions=5`。
+   - 回读（GroupIterator + AddFilter_ObjectSet，脚本 API）：
+     `pads=2 tracks=10 mech6=4 overlay=6 arcs=0 regions=5 texts=0`；
+     焊盘 `paste=-39370079`（= -3937.0079 mil）、`solder=20000`（= 2 mil），
+     与嘉立创导出 PcbDoc 的 `PASTEMASKEXPANSION_MANUAL=-3937.008mil` /
+     `SOLDERMASKEXPANSION_MANUAL=2mil` 一致。
+   - `MyLib.PcbLib` 已用 v13 重画（旧文件备份 `MyLib.PcbLib.bak-1792921089`）：
+     R0603 = 2 pads / 10 tracks（M6 4 + overlay 6）/ 5 regions / 0 arcs；
+     TSSOP-30 = 30 pads / 31 个 Region 对象（另 30 个 cutout 轮廓画成 Track，
+     共 128 tracks，其中 M6 4 段）/ 0 texts；两个封装的 solder 都是 2 mil。
+   - 仍未做：导出件里的 Designator/Comment 两段 Text（目前 `texts=0`）。

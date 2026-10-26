@@ -80,7 +80,14 @@ function setPathStatus(message, isError) {
 
 const samePath = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 
-function readSavedPaths(field) {
+/* 常用路径持久化：服务端 state 目录优先（关闭程序后仍然保留），
+   localStorage 仅作为兜底与旧版本数据迁移来源。 */
+const PREFS_API = '/api/prefs';
+let prefs = { paths: {}, lists: { outDir: [], schLib: [], pcbLib: [] }, options: {} };
+let prefsLoaded = false;
+let prefsTimer = null;
+
+function readLocalSavedPaths(field) {
   try {
     const list = JSON.parse(localStorage.getItem(field.storageKey) || '[]');
     return Array.isArray(list)
@@ -89,9 +96,90 @@ function readSavedPaths(field) {
       : [];
   } catch { return []; }
 }
-function writeSavedPaths(field, list) {
+function readSavedPaths(field) {
+  if (prefsLoaded && prefs.lists && Array.isArray(prefs.lists[field.key])) {
+    return prefs.lists[field.key].slice(0, 20);
+  }
+  return readLocalSavedPaths(field);
+}
+function mirrorSavedPaths(field, list) {
   try { localStorage.setItem(field.storageKey, JSON.stringify(list.slice(0, 20))); }
   catch { /* localStorage 不可用时静默忽略 */ }
+}
+function capturePrefsFromUi() {
+  prefs.paths = {
+    outDir: el.outDir.value.trim(),
+    schLib: el.schLib.value.trim(),
+    pcbLib: el.pcbLib.value.trim(),
+  };
+  prefs.options = {
+    keepDocs: !!(el.keepDocs && el.keepDocs.checked),
+    makePartLibs: !!(el.makePartLibs && el.makePartLibs.checked),
+  };
+}
+function sendPrefs(keepalive) {
+  capturePrefsFromUi();
+  for (const field of PATH_FIELDS) mirrorSavedPaths(field, prefs.lists[field.key] || []);
+  return fetch(PREFS_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ prefs }),
+    keepalive: keepalive === true,
+  }).catch(() => { /* 服务未就绪时忽略，localStorage 仍留有副本 */ });
+}
+function flushPrefs() {
+  if (prefsTimer) { clearTimeout(prefsTimer); prefsTimer = null; }
+  return sendPrefs(false);
+}
+function persistPrefs() {
+  if (prefsTimer) clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(flushPrefs, 150);
+}
+function writeSavedPaths(field, list) {
+  prefs.lists[field.key] = list.slice(0, 20);
+  mirrorSavedPaths(field, prefs.lists[field.key]);
+  persistPrefs();
+}
+/** 载入服务端保存的常用路径、上次使用路径与勾选状态。 */
+function applyPrefs(loaded) {
+  const lists = { outDir: [], schLib: [], pcbLib: [] };
+  let migrated = false;
+  for (const field of PATH_FIELDS) {
+    const serverList = (loaded.lists && Array.isArray(loaded.lists[field.key]))
+      ? loaded.lists[field.key] : [];
+    const localList = readLocalSavedPaths(field);
+    const seen = new Set();
+    const merged = [];
+    for (const p of [...serverList, ...localList]) {
+      const v = String(p || '').trim();
+      if (!v || seen.has(v.toLowerCase())) continue;
+      seen.add(v.toLowerCase());
+      merged.push(v);
+      if (merged.length >= 20) break;
+    }
+    // 服务端没有、本地还留着的条目：说明是旧版本 localStorage 数据，保存回去。
+    if (localList.some((p) => !serverList.some((s) => samePath(s, p)))) migrated = true;
+    lists[field.key] = merged;
+  }
+  prefs.lists = lists;
+  prefs.paths = (loaded.paths && typeof loaded.paths === 'object') ? { ...loaded.paths } : {};
+  prefs.options = (loaded.options && typeof loaded.options === 'object') ? { ...loaded.options } : {};
+  prefsLoaded = true;
+  for (const key of ['outDir', 'schLib', 'pcbLib']) {
+    const v = prefs.paths[key];
+    if (typeof v !== 'string' || !v.trim()) continue;
+    // 不覆盖用户在 /api/prefs 返回前已经手动输入的路径。
+    const current = el[key].value.trim();
+    const untouched = !current || samePath(current, FALLBACK_DEFAULTS[key]) || samePath(current, DEFAULTS[key]);
+    if (untouched) el[key].value = v.trim();
+  }
+  if (el.keepDocs && typeof prefs.options.keepDocs === 'boolean') el.keepDocs.checked = prefs.options.keepDocs;
+  if (el.makePartLibs && typeof prefs.options.makePartLibs === 'boolean') el.makePartLibs.checked = prefs.options.makePartLibs;
+  for (const field of PATH_FIELDS) {
+    mirrorSavedPaths(field, lists[field.key]);
+    renderSavedPaths(field);
+  }
+  if (migrated) persistPrefs();
 }
 function renderSavedPaths(field, selectedValue) {
   const list = readSavedPaths(field);
@@ -146,6 +234,8 @@ async function browsePath(field) {
     if (data.path) {
       field.input.value = data.path;
       setPathStatus('已选择：' + data.path, false);
+      capturePrefsFromUi();
+      persistPrefs();
     } else {
       setPathStatus('已取消选择。', false);
     }
@@ -304,6 +394,8 @@ async function doBuild() {
     currentJobId = data.jobId;
     el.jobId.textContent = 'jobId: ' + data.jobId;
     if (data.paths) setPaths(data.paths);
+    capturePrefsFromUi();
+    persistPrefs();
     el.buildBtn.textContent = '生成中…';
     poll();
   } catch (err) {
@@ -469,6 +561,8 @@ el.resetPaths.addEventListener('click', () => {
   setPaths(DEFAULTS);
   for (const field of PATH_FIELDS) renderSavedPaths(field, '');
   setPathStatus('');
+  capturePrefsFromUi();
+  persistPrefs();
 });
 for (const field of PATH_FIELDS) {
   field.browseBtn.addEventListener('click', () => browsePath(field));
@@ -478,20 +572,44 @@ for (const field of PATH_FIELDS) {
     if (field.select.value) {
       field.input.value = field.select.value;
       setPathStatus('已填入：' + field.select.value, false);
+      capturePrefsFromUi();
+      persistPrefs();
     }
   });
+  // 直接输入/粘贴路径后，离开输入框就记住它，重启程序后仍是这个路径。
+  field.input.addEventListener('change', () => {
+    capturePrefsFromUi();
+    persistPrefs();
+  });
+}
+for (const box of [el.keepDocs, el.makePartLibs]) {
+  if (!box) continue;
+  box.addEventListener('change', () => { capturePrefsFromUi(); persistPrefs(); });
 }
 el.logCopy.addEventListener('click', async () => {
   if (await copyText(lastLogText || '')) flash(el.logCopy);
 });
-window.addEventListener('beforeunload', stopPolling);
+// pagehide 在应用窗口关闭时也可能触发（beforeunload 不保证）；两处都发一次。
+function savePrefsOnExit() {
+  stopPolling();
+  if (prefsTimer) { clearTimeout(prefsTimer); prefsTimer = null; }
+  try {
+    capturePrefsFromUi();
+    const blob = new Blob([JSON.stringify({ prefs })], { type: 'application/json' });
+    if (!navigator.sendBeacon || !navigator.sendBeacon(PREFS_API, blob)) sendPrefs(true);
+  } catch { /* ignore */ }
+}
+window.addEventListener('pagehide', savePrefsOnExit);
+window.addEventListener('beforeunload', savePrefsOnExit);
 
 setPaths(DEFAULTS);
 for (const field of PATH_FIELDS) renderSavedPaths(field);
 
 // The portable build runs from a different folder; take the three defaults
-// from its /api/health instead of the hard-coded original paths.
-(async function loadServerDefaults() {
+// from its /api/health instead of the hard-coded original paths. Then restore
+// the paths/lists the server saved in its state directory, so closing the app
+// (or a different browser/port) does not lose them.
+(async function loadServerState() {
   try {
     const res = await fetch('/api/health', { cache: 'no-store' });
     const data = await res.json();
@@ -500,5 +618,10 @@ for (const field of PATH_FIELDS) renderSavedPaths(field);
       setPathsIfUntouched(DEFAULTS);
     }
   } catch { /* file:// static preview or server not ready */ }
+  try {
+    const res = await fetch(PREFS_API, { cache: 'no-store' });
+    const data = await res.json();
+    if (data && data.ok && data.prefs) applyPrefs(data.prefs);
+  } catch { /* keep the localStorage fallback */ }
   el.q.focus();
 })();

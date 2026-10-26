@@ -1,14 +1,57 @@
 {
   "E:\\EDA2Altium-exe\\library\\MyLib.SchLib": [
     "BQ7693003DBTR",
-    "0603WAF1002T5E"
+    "0603WAF1002T5E",
+    "HC-0.8-3PWT"
   ],
   "E:\\EDA2Altium-exe\\library\\MyLib.PcbLib": [
     "TSSOP-30_L7.8-W4.4-P0.50-LS6.4-BL",
-    "R0603"
+    "R0603",
+    "CONN-SMD_3P-P0.80_HCTL_HC-0.8-3PWT"
   ],
   "__versions": {
-    "E:\\EDA2Altium-exe\\library\\MyLib.SchLib": "LCEDA2AD-v9-p150",
-    "E:\\EDA2Altium-exe\\library\\MyLib.PcbLib": "LCEDA2AD-v9-p150"
-  }
+    "E:\\EDA2Altium-exe\\library\\MyLib.SchLib": "LCEDA2AD-v11-p150",
+    "E:\\EDA2Altium-exe\\library\\MyLib.PcbLib": "LCEDA2AD-v13-p150",
+    "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroundRes_Digital.SchLib": "LCEDA2AD-v11-p150",
+    "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroundRes.PcbLib": "LCEDA2AD-v14-p150",
+    "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\GroundRes_Semi.SchLib": "LCEDA2AD-v11-p150",
+    "E:\\GroundRes\\Hardware\\ADpro\\Circle_CONN\\Schlib1.SchLib": "LCEDA2AD-v11-p150",
+    "E:\\GroundRes\\Hardware\\ADpro\\Circle_CONN\\PcbLib1.PcbLib": "LCEDA2AD-v12-p150",
+    "E:\\EDA2Altium-exe\\tmp_e2e\\E2E.SchLib": "LCEDA2AD-v11-p150",
+    "E:\\EDA2Altium-exe\\tmp_e2e\\E2E.PcbLib": "LCEDA2AD-v13-p150"
+  },
+  "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroundRes_Digital.SchLib": [
+    "BQ25756RRVR",
+    "STM32F103C8T6"
+  ],
+  "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroundRes.PcbLib": [
+    "TQFN-36_L6.0-W5.0-P0.50-BL-EP-1",
+    "VSON-CLIP-8_L5.0-W6.0-P1.27-BL",
+    "TO-220-3_L9.9-W4.5-P2.54-L-1",
+    "SOD-123_L2.7-W1.6-LS3.7-FD",
+    "LQFP-48_L7.0-W7.0-P0.50-LS9.0-BL"
+  ],
+  "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\GroundRes_Semi.SchLib": [
+    "IRLZ44NPBF-HXY",
+    "CSD18540Q5B",
+    "1N4148W"
+  ],
+  "E:\\GroundRes\\Hardware\\ADpro\\Circle_CONN\\Schlib1.SchLib": [
+    "0402WGF1001TCE",
+    "HC-0.8-2PWT",
+    "HC-0.8-3PWT"
+  ],
+  "E:\\GroundRes\\Hardware\\ADpro\\Circle_CONN\\PcbLib1.PcbLib": [
+    "R0402",
+    "CONN-SMD_2P-P0.80_HCTL_HC-0.8-2PWT",
+    "CONN-SMD_3P-P0.80_HCTL_HC-0.8-3PWT"
+  ],
+  "E:\\EDA2Altium-exe\\out_test\\T.SchLib": [],
+  "E:\\EDA2Altium-exe\\out_test\\T.PcbLib": [],
+  "E:\\EDA2Altium-exe\\tmp_e2e\\E2E.SchLib": [
+    "0603WAF1002T5E"
+  ],
+  "E:\\EDA2Altium-exe\\tmp_e2e\\E2E.PcbLib": [
+    "R0603"
+  ]
 }

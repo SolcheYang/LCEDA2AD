@@ -24,12 +24,23 @@
   "footprint": {
     "pads": [
       { "number": "1", "x": -0.75, "y": 0, "w": 0.9, "h": 0.95,
-        "shape": "round", "layer": "top", "hole": 0 }
+        "shape": "round", "layer": "top", "hole": 0, "rotation": 0, "plated": true,
+        "pasteExpansion": -100, "solderExpansion": 0.0508 },
+      { "number": "", "x": 2.4, "y": 0, "w": 0.7, "h": 0.7,
+        "shape": "round", "layer": "multi", "hole": 0.7, "rotation": 0, "plated": false,
+        "pasteExpansion": 0, "solderExpansion": 0.0508 }
     ],
     "tracks": [
       { "layer": "top_overlay", "x1": -0.9, "y1": -0.6, "x2": 0.9, "y2": -0.6, "width": 0.12 }
     ],
-    "circles": [ { "layer": "top_overlay", "x": 0, "y": 0, "r": 0.3, "width": 0.12 } ]
+    "circles": [ { "layer": "top_overlay", "x": 0, "y": 0, "r": 0.3, "width": 0.12 } ],
+    "arcs": [ { "layer": "top_overlay", "x": 0, "y": 0, "r": 0.3,
+                "start": 0, "end": 180, "width": 0.12 } ],
+    "regions": [
+      { "layer": "top_paste", "kind": "solid", "points": [[-0.9,-0.6],[-0.6,-0.6],[-0.6,0.6],[-0.9,0.6]],
+        "holes": [] },
+      { "layer": "component_shape", "kind": "solid", "points": [[-0.8,-0.4],[0.8,-0.4],[0.8,0.4],[-0.8,0.4]] }
+    ]
   }
 }
 ```
@@ -38,10 +49,21 @@
 - `footprint.*` 单位 **mm**，原点=封装中心。
 - `orient` ∈ {0,90,180,270}，含义=引脚从 (x,y) 指向元件的方向（0=向右伸出，引脚主体在左侧）。
 - `electrical` ∈ {input,output,bidirectional,passive,power,openCollector,openEmitter,unspecified}。
-- `shape` ∈ {round,rect,octagonal}；`layer` ∈ {top,bottom,multi}；`hole` = 孔径 mm，0=SMD（通孔件 `layer:"multi"` 且 hole>0）。
-- `symbol.shapes[].kind` 布局（实测确认，四种）：
-  `{kind:"rect", x1,y1,x2,y2}` / `{kind:"ellipse", x,y,rx,ry}` / `{kind:"polyline", points:[[x,y],…]}` / `{kind:"polygon", points:[[x,y],…]}`。
-- 丢弃项（契约内无字段，已实测确认）：ARC、SOLIDREGION(层 99/100/101 属装饰区，非焊盘)、SVGNODE(3D 占位)。
+- `shape` ∈ {round,rect,octagonal}；`layer` ∈ {top,bottom,multi,top_overlay,bottom_overlay,top_paste,bottom_paste,top_solder,bottom_solder,board_outline,document,top_assembly,bottom_assembly,mechanical,component_shape,lead_shape,component_marking}；`hole` = 孔径 mm，0=SMD（通孔件 `layer:"multi"` 且 hole>0）。
+  层名对应 EasyEDA 标准层：1 top / 2 bottom / 3 top_overlay / 4 bottom_overlay / 5 top_paste / 6 bottom_paste / 7 top_solder / 8 bottom_solder / 10 board_outline / 11 multi / 12 document / 13 top_assembly / 14 bottom_assembly / 15 mechanical / 99 component_shape / 100 lead_shape / 101 component_marking。
+- `rotation` = 焊盘旋转角（度，0–360）；`plated` 缺省为 `true`，`false` = 非金属化机械孔（NPTH，通常 `number:""`、`w=h=hole`）。EasyEDA 的 `HOLE` 记录归一化为这种 pad。
+- `pasteExpansion` / `solderExpansion` = 钢网 / 阻焊开窗的单边扩边量（mm），来自 EasyEDA `PAD` 记录第 17/18 字段（单位 10 mil ×0.254）。LCEDA 的 Altium 导出原样写入焊盘 Cache：`pasteExpansion ≠ 0` 时启用 Manual（官方库通常为 `-393.7` 单位 ⇒ `-3937 mil`，表示“焊盘不出钢网、钢网由 layer 5 区域提供”），`= 0` 时保持 Rule；`solderExpansion` 官方库通常为 `0.2` 单位 ⇒ `2 mil`。
+- `arcs[]` = 圆弧丝印/铜箔弧：(`x,y`) 圆心 mm、`r` 半径 mm、`start`/`end` Altium 角度（逆时针，度）。EasyEDA 的 `CIRCLE` 仍单独放在 `circles[]`（等价于 0→360 的 arc）。
+- `regions[]` = EasyEDA `SOLIDREGION` 填充多边形：`layer` 同上；`points` 为闭合外轮廓（mm，首点不重复）；`kind` ∈ {solid,cutout,npth}；`holes` = 额外子轮廓（当前写库只画外轮廓，holes 仅记录）。Altium 侧映射：真实制造层（silk/mask/paste/copper）用同名层，EasyEDA 文档层落到机械层（100→Mechanical 9，12→Mechanical 2，13/14/15→Mechanical 4/5/6）。**101（component_marking）不落任何层**：LCEDA 的 Altium 导出会丢弃它，pin-1 标记已经由 layer 3 的丝印圆弧表达；`apiFootprintToMil` 在写文档前就过滤掉 101 的线/弧/圆/区域。`component_shape`（99）不画填充区、线、弧、圆：Mechanical 6 仍按 LCEDA 导出规则用 2 mil 线宽把轮廓画一遍；Mechanical 8 只写一个约 0.15 mm 半径的实心小圆点，位于 1 号焊盘外侧（远离焊盘外接框中心的方向）。
+- `symbol.shapes[].kind` 布局（实测确认，五种）：
+  `{kind:"rect", x1,y1,x2,y2}` / `{kind:"ellipse", x,y,rx,ry}` / `{kind:"arc", x,y,r,start,end}` /
+  `{kind:"polyline", points:[[x,y],…]}` / `{kind:"polygon", points:[[x,y],…]}`。
+  `arc` 的 (`x,y`)=圆心、`r`=半径、`start`/`end`=Altium 角度（逆时针，度）；
+  EasyEDA 的 `A` 记录若为椭圆弧，按 10° 采样成 `polyline`。
+  EasyEDA 的 `PG`（闭合点列）与 `PT`（路径）都归一化为 `polygon`。
+- 丢弃项：`SVGNODE`（3D 模型占位，契约内无字段）。`SOLIDREGION` 已纳入 `regions[]`（v12），所有 EasyEDA 层都绘制；`solid` 画成填充区，`cutout`/`npth` 与 `regions[].holes` 画成闭合轮廓线（不填充）。少于 3 个点的无效区域记入 `skippedregions`。
+  注：EasyEDA 的 `ARC` 与 `RECT` 记录已纳入绘制 —— `ARC` 归一化为 `arcs[]`（椭圆弧按 10° 采样成 `tracks[]`），`RECT` 归一化为四条 `tracks[]` 边。
+- PcbDoc 中间文档（`buildPcbDoc`）暂不写 Region 记录；`regions[]` 在库阶段直接取自 EasyEDA 模型。
 - `symbol.texts` 为保留字段，当前恒为 `[]`（探测样本均无文本记录）。
 - 命名口径：`model.package` 取 EasyEDA 包名（如 `R0603`），搜索结果里的 `package` 取 LCSC 值（如 `0603`）；Altium 侧命名一律用 `model.package`。
 - `datasheet` 允许恒为空串；`pin.name` 为空时归一化为 `~`。
@@ -100,6 +122,9 @@ HTTP（仅 localhost，端口 43180，可用 PORT 覆盖）：
 - `POST /api/build` body `{ query, outDir, schLib, pcbLib }` → `{ ok:true, jobId }`（异步执行）
 - `POST /api/pick-path` body `{ mode:"folder"|"schlib"|"pcblib", current? }` → `{ ok:true, path }`
   （由本机弹出 Windows 原生选择框；取消时返回空 path。浏览器无法直接取得绝对路径。）
+- `GET /api/prefs` → `{ ok:true, prefs:{ paths, lists, options }, file }`
+- `POST /api/prefs` body `{ prefs:{ paths?, lists?, options? } }` → `{ ok:true, prefs }`
+  （常用路径与上次使用的路径写入启动器 state 目录的 `ui-prefs.json`，关闭程序后仍保留。）
 - `GET /api/job?id=...` → `{ ok:true, state:"running|done|error", steps:[...], artifacts:[...], log:"<tail>" }`
 
 默认值（UI 与服务端一致）：`outDir = E:\EDA2Altium\out`，`schLib = E:\EDA2Altium\library\MyLib.SchLib`，`pcbLib = E:\EDA2Altium\library\MyLib.PcbLib`。

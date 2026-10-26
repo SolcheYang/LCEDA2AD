@@ -23,7 +23,7 @@
 | SchLib Description / Value | Description 取 EasyEDA `result.description`；Value 取 `c_para.Value`，有值则新建可见 `Value` 参数 | C25804：`10KΩ (1002) ±1%` / `10kΩ`（可见）；C92116 接口返回空描述/无 Value |
 | Pin Name / Value 位置 | Designator=Name 时隐藏 Name；Value 放符号右下角、右下对齐、只显示值 | C25804 引脚 1/2 已验证；C92116 的 Name 与 Designator 不同，保持可见 |
 | 可选中间产物 | 页面勾选保留 SchDoc/PcbDoc、生成单件 SchLib/PcbLib；保存到 `<outDir>\<元件名>\`；其他中间文件清理 | C25804 临时库验证；默认关闭时 out 为空 |
-| 常用路径 / 浏览 | outDir、schLib、pcbLib 三个路径都有常用下拉（localStorage，保存当前 / 删除）与 Windows 原生选择框；库文件可选已有或新建 | UI + `POST /api/pick-path` |
+| 常用路径 / 浏览 | outDir、schLib、pcbLib 三个路径都有常用下拉（保存到 state 目录 `ui-prefs.json`，关闭程序后仍保留；保存当前 / 删除）与 Windows 原生选择框；库文件可选已有或新建 | UI + `GET/POST /api/prefs` + `POST /api/pick-path` |
 | 工程在 E: | `E:\EDA2Altium` | — |
 
 ## 已验证（离线，不需要 Altium）
@@ -130,12 +130,18 @@
 
 ## 已知差异
 
-- 符号只重建引脚、矩形、椭圆；折线/多边形会跳过（日志 `skippedShapes=N`）。
+- 符号重建引脚、矩形、椭圆、圆弧、折线、闭合多边形（v11）；未知图形会记入
+  `skippedShapes=N`，符号文本框 `T` 未重建。
 - 符号参数（SupplierPart、Datasheet 等 `RECORD=41`）未重建；只新增 `Value`
   （仅当 EasyEDA `c_para.Value` 存在且设为可见）。
 - Description 取 EasyEDA `result.description`；若接口返回空（如 C92116），
   SchLib Description 为空。
-- 封装 3D Body / Mechanical Region 未重建；焊盘、丝印线、圆弧完整。
+- 封装重建 EasyEDA 的每一层（v14，与嘉立创导出的 PcbDoc 逐项对齐）：焊盘
+  （含旋转、NPTH、钢网/阻焊扩边）、丝印、阻焊、钢网、Multi、Document、
+  引脚外形（Mechanical 9）+ Mechanical 6 外框、制造层 `SOLIDREGION` 填充区；
+  Mechanical 8 只保留 1 脚旁的一个约 0.15 mm 小圆点；layer 101（极性标记）按
+  嘉立创导出的行为丢弃；仅 3D Body（`SVGNODE`）不重建。
+- 导出 PcbDoc 里的 Designator/Comment 两段 Text 尚未在 PcbLib 组件里生成（v13）。
 - 目标 SchLib 已有同名组件时不会覆盖；旧版组件需在 Altium 里删除一次再生成，
   或换一个新的目标库路径。PcbLib 的旧空组件会自动检测并重写。
 - 这些差异来自“无浏览器 + 脚本 API 重建”的路线；若需要 100% 菜单同等产物，
