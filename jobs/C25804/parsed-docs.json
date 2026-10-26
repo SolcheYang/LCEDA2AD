@@ -1,0 +1,151 @@
+{
+  "sch": {
+    "libReference": "0603WAF1002T5E",
+    "partCount": 1,
+    "location": {
+      "x": 2500,
+      "y": 2000
+    },
+    "pins": [
+      {
+        "number": "2",
+        "name": "2",
+        "x": 250,
+        "y": 0,
+        "length": 150,
+        "orient": 180,
+        "bodyX": 100,
+        "bodyY": 0,
+        "outwardOrient": 0,
+        "electrical": "passive",
+        "ownerPartId": 1
+      },
+      {
+        "number": "1",
+        "name": "1",
+        "x": -250,
+        "y": 0,
+        "length": 150,
+        "orient": 0,
+        "bodyX": -100,
+        "bodyY": 0,
+        "outwardOrient": 180,
+        "electrical": "passive",
+        "ownerPartId": 1
+      }
+    ],
+    "shapes": [
+      {
+        "kind": "rect",
+        "x1": -100,
+        "y1": -40,
+        "x2": 100,
+        "y2": 40,
+        "lineWidth": 1
+      }
+    ],
+    "stats": {
+      "pins": 2,
+      "rects": 1,
+      "ellipses": 0,
+      "arcs": 0,
+      "polylines": 0,
+      "polygons": 0
+    }
+  },
+  "pcb": {
+    "pattern": "R0603",
+    "origin": {
+      "x": 3167.035,
+      "y": 3147.64
+    },
+    "rotation": 0,
+    "layer": "top",
+    "pads": [
+      {
+        "number": "2",
+        "x": 29.661399999999958,
+        "y": 0,
+        "w": 31.752,
+        "h": 34.0157,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0,
+        "rotation": 0,
+        "plated": true
+      },
+      {
+        "number": "1",
+        "x": -29.661399999999958,
+        "y": 0,
+        "w": 31.752,
+        "h": 34.0157,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0,
+        "rotation": 0,
+        "plated": true
+      }
+    ],
+    "tracks": [
+      {
+        "layer": "top_overlay",
+        "x1": 16.7795000000001,
+        "y1": -26.007900000000063,
+        "x2": 54.53150000000005,
+        "y2": -26.007900000000063,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": 54.53150000000005,
+        "y1": -26.007900000000063,
+        "x2": 54.53150000000005,
+        "y2": 26.007900000000063,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": 54.53150000000005,
+        "y1": 26.007900000000063,
+        "x2": 16.7795000000001,
+        "y2": 26.007900000000063,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -16.779499999999643,
+        "y1": -26.007900000000063,
+        "x2": -54.53150000000005,
+        "y2": -26.007900000000063,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -54.53150000000005,
+        "y1": -26.007900000000063,
+        "x2": -54.53150000000005,
+        "y2": 26.007900000000063,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -54.53150000000005,
+        "y1": 26.007900000000063,
+        "x2": -16.779499999999643,
+        "y2": 26.007900000000063,
+        "width": 6
+      }
+    ],
+    "arcs": [],
+    "regions": 0,
+    "texts": 0,
+    "stats": {
+      "pads": 2,
+      "tracks": 6,
+      "arcs": 0,
+      "regions": 0,
+      "texts": 0
+    }
+  }
+}

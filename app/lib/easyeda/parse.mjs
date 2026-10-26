@@ -634,6 +634,18 @@ function firstCpara(docs) {
   return {};
 }
 
+/**
+ * EasyEDA stores the designator prefix in `head.c_para.pre` ("R?", "U?", "SW?"…).
+ * The SchLib designator is "<PREFIX>??"; keep only A–Z so the value is safe as a
+ * Pascal string and matches LCEDA's uppercase prefix.
+ */
+export function designatorPrefixOf(cpara) {
+  const raw = cpara && typeof cpara === "object"
+    ? (cpara.pre ?? cpara.Pre ?? cpara.prefix ?? cpara.Prefix ?? "")
+    : "";
+  return String(raw).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+}
+
 function tierPrice(price) {
   if (Array.isArray(price)) {
     for (const tier of price) {
@@ -683,6 +695,8 @@ export function buildComponentModel(raw, lcscHint = "") {
     // No trustworthy datasheet field in the public API (head.c_para.link is often a package
     // drawing or a sibling part's PDF) -> deliberately empty.
     datasheet: "",
+    // LCEDA's designator prefix ("R", "U", "C"…); the SchLib designator is PREFIX + "??".
+    designatorPrefix: designatorPrefixOf(cpara),
     symbol: { pins, shapes, texts: [] },
     footprint,
   };

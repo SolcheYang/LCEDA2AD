@@ -48,6 +48,13 @@ function ascii(value) {
     .replace(/[|\r\n]/g, ' ')
     .trim();
 }
+
+/** LCEDA reference prefix (head.c_para.pre, e.g. "R?", "U?"); U when absent. */
+function designatorPrefix(model) {
+  const letters = String((model && model.designatorPrefix) || '')
+    .toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  return letters || 'U';
+}
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 /** mil -> SchDoc 10-mil unit string. */
 function du(value) {
@@ -112,7 +119,7 @@ export function buildSchDoc(model) {
 
   recs.push('|RECORD=34|COLOR=8388608|LOCATION.X=' + ox + '|LOCATION.Y=' + oy
     + '|OWNERINDEX=1|OWNERPARTID=-1|INDEXINSHEET=' + (indexInSheet++)
-    + '|FONTID=3|NAME=Designator|TEXT=U??|SHOWNAME=F|ISHIDDEN=T|ORIENTATION=0|JUSTIFICATION=0');
+    + '|FONTID=3|NAME=Designator|TEXT=' + designatorPrefix(model) + '??|SHOWNAME=F|ISHIDDEN=T|ORIENTATION=0|JUSTIFICATION=0');
 
   recs.push('|RECORD=41|COLOR=65280|LOCATION.X=' + ox + '|LOCATION.Y=' + oy
     + '|OWNERINDEX=1|OWNERPARTID=-1|INDEXINSHEET=' + (indexInSheet++)
@@ -227,7 +234,7 @@ export function buildPcbDoc(model) {
 
   recs.push('|RECORD=Component|ID=0|LAYER=TOP|X=' + mil(ox) + '|Y=' + mil(oy)
     + '|ROTATION=0|LOCKED=FALSE|PATTERN=' + ascii(model.package || model.lcsc)
-    + '|SOURCEDESIGNATOR=U?|NAMEON=FALSE|COMMENTON=FALSE|SOURCEUNIQUEID=' + randomUUID());
+    + '|SOURCEDESIGNATOR=' + designatorPrefix(model) + '?|NAMEON=FALSE|COMMENTON=FALSE|SOURCEUNIQUEID=' + randomUUID());
 
   for (const pad of pads) {
     const hole = num(pad.hole);

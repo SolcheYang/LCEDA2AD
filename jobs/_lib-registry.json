@@ -18,18 +18,24 @@
     "E:\\GroundRes\\Hardware\\ADpro\\Circle_CONN\\Schlib1.SchLib": "LCEDA2AD-v11-p150",
     "E:\\GroundRes\\Hardware\\ADpro\\Circle_CONN\\PcbLib1.PcbLib": "LCEDA2AD-v12-p150",
     "E:\\EDA2Altium-exe\\tmp_e2e\\E2E.SchLib": "LCEDA2AD-v11-p150",
-    "E:\\EDA2Altium-exe\\tmp_e2e\\E2E.PcbLib": "LCEDA2AD-v13-p150"
+    "E:\\EDA2Altium-exe\\tmp_e2e\\E2E.PcbLib": "LCEDA2AD-v13-p150",
+    "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroundRes_Passive_CAP.SchLib": "LCEDA2AD-v11-p150",
+    "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroudRes_COM.SchLib": "LCEDA2AD-v11-p150"
   },
   "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroundRes_Digital.SchLib": [
     "BQ25756RRVR",
-    "STM32F103C8T6"
+    "STM32F103C8T6",
+    "X32258MSB4SI"
   ],
   "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroundRes.PcbLib": [
     "TQFN-36_L6.0-W5.0-P0.50-BL-EP-1",
     "VSON-CLIP-8_L5.0-W6.0-P1.27-BL",
     "TO-220-3_L9.9-W4.5-P2.54-L-1",
     "SOD-123_L2.7-W1.6-LS3.7-FD",
-    "LQFP-48_L7.0-W7.0-P0.50-LS9.0-BL"
+    "LQFP-48_L7.0-W7.0-P0.50-LS9.0-BL",
+    "CRYSTAL-SMD_4P-L3.2-W2.5-BL",
+    "C0603",
+    "HDR-TH_4P-P2.54-V-M"
   ],
   "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\GroundRes_Semi.SchLib": [
     "IRLZ44NPBF-HXY",
@@ -53,5 +59,11 @@
   ],
   "E:\\EDA2Altium-exe\\tmp_e2e\\E2E.PcbLib": [
     "R0603"
+  ],
+  "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroundRes_Passive_CAP.SchLib": [
+    "CC0603JRNPO9BN200"
+  ],
+  "E:\\GroundRes\\Hardware\\ADpro\\GroundRes\\Lib\\GroudRes_COM.SchLib": [
+    "PZ254V-11-04P"
   ]
 }

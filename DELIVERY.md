@@ -68,7 +68,8 @@
   `History/__Previews`、旧库 `.bak-时间戳`；勾选的文档/单件库保留在元件文件夹。
 - **UI**：输出目录下拉（localStorage）保存/删除常用目录；两个勾选框；去掉冗长提示。
 - **SchLib**：引脚“本体边缘 + 向外朝向”（180° 修正）；矩形/椭圆 `eSmall`；
-  Design Item ID / 库引用 = MPN（`BQ7693003DBTR`）；Designator `U??`；
+  Design Item ID / 库引用 = MPN（`BQ7693003DBTR`）；Designator = 立创 EDA 前缀 + `??`
+  （`R?`→`R??`、`U?`→`U??`、`CN?`→`CN??`，接口无前缀时回退 `U??`）；
   Comment = MPN 且 `Comment.IsHidden := True`；border 颜色 128（RGB 128,0,0）；
   Ellipse `IsSolid=False` / `AreaColor=0`；pin length 150 mil。
 - **封装绑定（v5，v8 修正）**：`AddSchImplementation` + `ModelName=<封装名>` +

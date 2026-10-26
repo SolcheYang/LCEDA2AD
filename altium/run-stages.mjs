@@ -271,7 +271,8 @@ async function main() {
   const model = await loadModel();
   const wantPins = model.symbol.pins.length;
   const wantPads = model.footprint.pads.length;
-  log('model: ' + model.lcsc + ' ' + (model.package || '') + ' pins=' + wantPins + ' pads=' + wantPads);
+  log('model: ' + model.lcsc + ' ' + (model.package || '') + ' pins=' + wantPins + ' pads=' + wantPads
+    + ' designator=' + (String(model.designatorPrefix || '').toUpperCase().replace(/[^A-Z]/g, '') || 'U') + '??');
   log('paths: OUT_DIR=' + OUT_DIR);
   log('paths: LIB_SCH=' + LIB_SCH);
   log('paths: LIB_PCB=' + LIB_PCB);

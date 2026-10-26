@@ -102,6 +102,16 @@ const LCEDA_SOLDER_MASK_MIL = 2;
 const padShape = (s) => PAD_SHAPE[String(s || '').toLowerCase()] || 'eRectangular';
 const pcbLayer = (l) => PCB_LAYER[String(l || '').toLowerCase()] || 'eTopLayer';
 
+// LCEDA keeps the reference prefix in head.c_para.pre ("R?", "U?", "SW?").
+// The SchLib designator is that uppercase prefix plus "??"; U is only a fallback
+// for payloads written before the model carried designatorPrefix.
+const DESIGNATOR_FALLBACK = 'U';
+export function designatorText(model) {
+  const letters = String((model && model.designatorPrefix) || '')
+    .toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  return (letters || DESIGNATOR_FALLBACK) + '??';
+}
+
 /**
  * Centre of the Mechanical 8 pin-1 dot, in mil.
  * Pad 1 is found by its designator ("1"); a footprint without one falls back to
@@ -222,7 +232,7 @@ export function buildSymbolBody(model, lcsc) {
   out.push("    W('BS description');");
   out.push('    Target.ComponentDescription := ' + quoteWide(model.description || '') + ';');
   out.push("    W('BS designator');");
-  out.push("    Target.Designator.Text      := 'U??';");
+  out.push('    Target.Designator.Text      := ' + quote(designatorText(model)) + ';');
   out.push("    W('BS commenttext');");
   out.push('    Target.Comment.Text         := ' + quote(libName) + ';');
   out.push("    W('BS commenthidden');");

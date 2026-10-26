@@ -11,6 +11,7 @@
   "package": "0603",
   "description": "10K 1% 0603",
   "datasheet": "https://...",
+  "designatorPrefix": "R",
   "symbol": {
     "pins": [
       { "number": "1", "name": "~", "x": -100, "y": 0, "orient": 0,
@@ -49,6 +50,9 @@
 - `footprint.*` 单位 **mm**，原点=封装中心。
 - `orient` ∈ {0,90,180,270}，含义=引脚从 (x,y) 指向元件的方向（0=向右伸出，引脚主体在左侧）。
 - `electrical` ∈ {input,output,bidirectional,passive,power,openCollector,openEmitter,unspecified}。
+- `designatorPrefix` = 立创 EDA `head.c_para.pre` 的字母部分（转大写，如 `R?`→`R`、`CN?`→`CN`）。
+  SchLib 的 Designator 写成 `<designatorPrefix>??`（如 `R??`、`U??`、`CN??`），保证前缀与立创 EDA 一致；
+  模型缺该字段（旧 `component.json`）时回退 `U`。
 - `shape` ∈ {round,rect,octagonal}；`layer` ∈ {top,bottom,multi,top_overlay,bottom_overlay,top_paste,bottom_paste,top_solder,bottom_solder,board_outline,document,top_assembly,bottom_assembly,mechanical,component_shape,lead_shape,component_marking}；`hole` = 孔径 mm，0=SMD（通孔件 `layer:"multi"` 且 hole>0）。
   层名对应 EasyEDA 标准层：1 top / 2 bottom / 3 top_overlay / 4 bottom_overlay / 5 top_paste / 6 bottom_paste / 7 top_solder / 8 bottom_solder / 10 board_outline / 11 multi / 12 document / 13 top_assembly / 14 bottom_assembly / 15 mechanical / 99 component_shape / 100 lead_shape / 101 component_marking。
 - `rotation` = 焊盘旋转角（度，0–360）；`plated` 缺省为 `true`，`false` = 非金属化机械孔（NPTH，通常 `number:""`、`w=h=hole`）。EasyEDA 的 `HOLE` 记录归一化为这种 pad。

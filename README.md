@@ -180,7 +180,7 @@ jobs\_lib-registry.json            内部版本登记表
 | 阶段 | 动作 |
 |---|---|
 | `pcblib` | 打开/新建目标 PcbLib，创建封装（焊盘+旋转、NPTH 孔、丝印/阻焊/钢网、Mechanical 6 外框、Mechanical 8 的 1 脚圆点、制造层 `SOLIDREGION` 填充区）；已存在且版本最新则跳过；旧版或空组件自动重写 |
-| `schlib` | 打开/新建目标 SchLib，创建组件（MPN、`U??`、隐藏 Comment、绑定封装、颜色 128、引脚 150mil）；已存在则跳过 |
+| `schlib` | 打开/新建目标 SchLib，创建组件（MPN、立创前缀+`??`（如 `R??`/`U??`）、隐藏 Comment、绑定封装、颜色 128、引脚 150mil）；已存在则跳过 |
 | `pcblib_part`* | 仅勾选「单件库」时：在 `<outDir>\<元件名>\<C>_PCB.PcbLib` 创建单件封装库 |
 | `schlib_part`* | 仅勾选「单件库」时：在 `<outDir>\<元件名>\<C>_SCH.SchLib` 创建单件符号库 |
 
@@ -210,7 +210,8 @@ jobs\_lib-registry.json            内部版本登记表
   程序会自动删除该组件并用新几何重写一次。
 - **v4 元件字段**：
   - Design Item ID / 库引用 = **元件名称（MPN）**，不再用 C 编号；
-  - Designator = **`U??`**；
+  - Designator = **立创 EDA 的 `c_para.pre` 前缀 + `??`**（如 `R??`、`U??`、`CN??`；
+    接口未给前缀时回退 `U??`），前缀与立创 EDA 保持一致；
   - Comment = MPN，且 `Comment.IsHidden := True`（显示复选框不勾选）；
   - 绑定封装：`Target.AddSchImplementation` + `ModelName=<封装名>` +
     `ModelType='PCBLIB'`（v8 起不再设置 `UseComponentLibrary`，见下方 v8 修正）；
