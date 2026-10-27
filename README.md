@@ -22,7 +22,7 @@
 | 系统 | Windows 10/11 |
 | Node.js | ≥ 18（本机 v26） |
 | Node 依赖 | 首次使用在项目目录执行 `npm install`（安装 `iconv-lite`，用于 GBK 脚本源码）；`node_modules` 已随工程提供 |
-| Altium Designer | 默认 `E:\AD\AD\X2.EXE`；可用环境变量 `ALTIUM_EXE` 覆盖 |
+| Altium Designer | 默认 `E:\AD\AD\X2.EXE`；可在页面「输出位置 → Altium Designer 程序」里改（保存后重启程序仍生效），环境变量 `ALTIUM_EXE` 优先级最高 |
 | 网络 | 能访问 `easyeda.com` 的公开接口 |
 | 浏览器 | **不需要**（Chrome 已从当前流程移除）；`启动.vbs` 打开界面时优先用 Edge/Chrome 应用窗口 |
 | Windows Script Host | `启动.vbs` / `停止服务.vbs` 依赖它（Win10/11 默认可用）。若被组策略禁用，改用 `run.cmd` |
@@ -421,7 +421,7 @@ jobs\_lib-registry.json            内部版本登记表
 | `元件不存在` | C 编号错误或已下架；先用搜索框按名称找编号 |
 | `生成的 SchDoc/PcbDoc ... 不一致` | 数据接口返回异常；看 `jobs\<C编号>\parsed-docs.json` |
 | `Altium 脚本阶段失败` | 看页面实时日志里的 `STEP/OK/ERR` 与 `STAGE` 行；失败时中间文件会保留便于排查 |
-| `Altium 未安装或路径不对` | 设置 `ALTIUM_EXE` 指向 `X2.EXE` |
+| `Altium 未安装或路径不对` | 在页面「输出位置 → Altium Designer 程序」里选到 `X2.EXE` 并保存（或设置环境变量 `ALTIUM_EXE`） |
 | 双击 `启动.vbs` 没反应 | 看 `%LOCALAPPDATA%\LCEDA2Altium\server.err.log`；确认 Node 18+；若系统禁用 Windows Script Host，改用 `run.cmd` |
 | 停止服务提示“没有检测到…” | 服务已停止；若还有 `run.cmd` 控制台窗口，直接关闭即可 |
 | 端口占用 | `启动.vbs` 会自动换到空闲端口；`run.cmd` 可 `set PORT=43181` 后重启 |
@@ -429,7 +429,7 @@ jobs\_lib-registry.json            内部版本登记表
 环境变量：
 
 - `OUT_DIR` / `LIB_SCH` / `LIB_PCB`：输出与目标库（服务端会自动传）
-- `ALTIUM_EXE`：Altium 可执行文件
+- `ALTIUM_EXE`：Altium 可执行文件（优先级最高；不设则用页面保存值，页面没保存过才用默认路径）
 - `ALTIUM_STARTUP_MS`：单阶段冷启动上限（默认 180000）
 - `ALLOW_UNSAVED=1`：跳过“Altium 有未保存文档”的检查（默认禁止；仍不会关闭 Altium）
 - `KEEP_DOCS=1` / `MAKE_PART_LIBS=1`：保留 SchDoc/PcbDoc / 生成单件库

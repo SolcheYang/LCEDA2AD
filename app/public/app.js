@@ -4,6 +4,7 @@ const FALLBACK_DEFAULTS = {
   outDir: 'E:\\EDA2Altium\\out',
   schLib: 'E:\\EDA2Altium\\library\\MyLib.SchLib',
   pcbLib: 'E:\\EDA2Altium\\library\\MyLib.PcbLib',
+  altiumExe: 'E:\\AD\\AD\\X2.EXE',
 };
 // Replaced at startup with the running instance's own defaults (/api/health),
 // so a portable copy never writes into the original folder's libraries.
@@ -19,6 +20,8 @@ const el = {
   outDir: $('outDir'), outDirSaved: $('outDirSaved'),
   schLib: $('schLib'), schLibSaved: $('schLibSaved'),
   pcbLib: $('pcbLib'), pcbLibSaved: $('pcbLibSaved'),
+  altiumExe: $('altiumExe'), altiumExeSaved: $('altiumExeSaved'), altiumStatus: $('altium-status'),
+  browseAltiumExe: $('browse-altiumExe'), saveAltiumExe: $('save-altiumExe'), delAltiumExe: $('del-altiumExe'),
   browseOutDir: $('browse-outDir'), saveOutDir: $('save-outDir'), delOutDir: $('del-outDir'),
   browseSchLib: $('browse-schLib'), saveSchLib: $('save-schLib'), delSchLib: $('del-schLib'),
   browsePcbLib: $('browse-pcbLib'), savePcbLib: $('save-pcbLib'), delPcbLib: $('del-pcbLib'),
@@ -43,7 +46,7 @@ function setPaths(paths) {
 }
 // Do not overwrite a path the user already typed while /api/health was loading.
 function setPathsIfUntouched(paths) {
-  for (const key of ['outDir', 'schLib', 'pcbLib']) {
+  for (const key of ['outDir', 'schLib', 'pcbLib', 'altiumExe']) {
     const input = el[key];
     if (!input.value || input.value === FALLBACK_DEFAULTS[key]) {
       input.value = paths[key] || FALLBACK_DEFAULTS[key];
@@ -62,6 +65,10 @@ const PATH_FIELDS = [
   { key: 'pcbLib', mode: 'pcblib', storageKey: 'lceda2altium.pcbLibs.v1', placeholder: '常用 PcbLib…',
     input: el.pcbLib, select: el.pcbLibSaved, browseBtn: el.browsePcbLib,
     saveBtn: el.savePcbLib, delBtn: el.delPcbLib },
+  // Altium 主程序路径：改动会写进 state 目录的 ui-prefs.json，重启程序后仍然生效。
+  { key: 'altiumExe', mode: 'exe', storageKey: 'lceda2altium.altiumExes.v1', placeholder: '常用 Altium 路径…',
+    input: el.altiumExe, select: el.altiumExeSaved, browseBtn: el.browseAltiumExe,
+    saveBtn: el.saveAltiumExe, delBtn: el.delAltiumExe },
 ];
 
 let pathStatusTimer = null;
@@ -76,6 +83,26 @@ function setPathStatus(message, isError) {
   el.pathStatus.className = isError ? 'error' : 'hint';
   el.pathStatus.textContent = message;
   if (!isError) pathStatusTimer = setTimeout(() => setPathStatus(''), 4500);
+}
+
+/* Altium 主程序路径：显示来源（页面配置 / 环境变量 / 默认值）和文件是否存在。 */
+function renderAltiumStatus(info) {
+  const node = el.altiumStatus;
+  if (!node) return;
+  if (!info) { node.hidden = true; node.textContent = ''; return; }
+  node.hidden = false;
+  node.className = info.exists ? 'hint' : 'error';
+  const src = info.source === 'env'
+    ? '环境变量 ALTIUM_EXE（优先级最高，界面里的设置不生效）'
+    : (info.source === 'prefs' ? '页面保存的配置' : '默认值');
+  node.textContent = (info.exists ? '✓ 已找到：' : '✗ 未找到：') + info.path + '　·　来源：' + src;
+}
+async function refreshAltiumStatus() {
+  try {
+    const res = await fetch(PREFS_API, { cache: 'no-store' });
+    const data = await res.json();
+    if (data && data.ok && data.altium) renderAltiumStatus(data.altium);
+  } catch { /* 服务未就绪时忽略 */ }
 }
 
 const samePath = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
@@ -111,6 +138,7 @@ function capturePrefsFromUi() {
     outDir: el.outDir.value.trim(),
     schLib: el.schLib.value.trim(),
     pcbLib: el.pcbLib.value.trim(),
+    altiumExe: el.altiumExe ? el.altiumExe.value.trim() : '',
   };
   prefs.options = {
     keepDocs: !!(el.keepDocs && el.keepDocs.checked),
@@ -142,7 +170,7 @@ function writeSavedPaths(field, list) {
 }
 /** 载入服务端保存的常用路径、上次使用路径与勾选状态。 */
 function applyPrefs(loaded) {
-  const lists = { outDir: [], schLib: [], pcbLib: [] };
+  const lists = { outDir: [], schLib: [], pcbLib: [], altiumExe: [] };
   let migrated = false;
   for (const field of PATH_FIELDS) {
     const serverList = (loaded.lists && Array.isArray(loaded.lists[field.key]))
@@ -165,7 +193,7 @@ function applyPrefs(loaded) {
   prefs.paths = (loaded.paths && typeof loaded.paths === 'object') ? { ...loaded.paths } : {};
   prefs.options = (loaded.options && typeof loaded.options === 'object') ? { ...loaded.options } : {};
   prefsLoaded = true;
-  for (const key of ['outDir', 'schLib', 'pcbLib']) {
+  for (const key of ['outDir', 'schLib', 'pcbLib', 'altiumExe']) {
     const v = prefs.paths[key];
     if (typeof v !== 'string' || !v.trim()) continue;
     // 不覆盖用户在 /api/prefs 返回前已经手动输入的路径。
@@ -236,6 +264,7 @@ async function browsePath(field) {
       setPathStatus('已选择：' + data.path, false);
       capturePrefsFromUi();
       persistPrefs();
+      if (field.key === 'altiumExe') setTimeout(refreshAltiumStatus, 400);
     } else {
       setPathStatus('已取消选择。', false);
     }
@@ -559,6 +588,7 @@ el.q.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 el.buildBtn.addEventListener('click', doBuild);
 el.resetPaths.addEventListener('click', () => {
   setPaths(DEFAULTS);
+  if (el.altiumExe) el.altiumExe.value = DEFAULTS.altiumExe;
   for (const field of PATH_FIELDS) renderSavedPaths(field, '');
   setPathStatus('');
   capturePrefsFromUi();
@@ -582,6 +612,10 @@ for (const field of PATH_FIELDS) {
     persistPrefs();
   });
 }
+// 手改/粘贴 Altium 路径后，稍等自动保存完成再向服务端确认“文件是否存在”。
+if (el.altiumExe) {
+  el.altiumExe.addEventListener('change', () => setTimeout(refreshAltiumStatus, 400));
+}
 for (const box of [el.keepDocs, el.makePartLibs]) {
   if (!box) continue;
   box.addEventListener('change', () => { capturePrefsFromUi(); persistPrefs(); });
@@ -603,6 +637,7 @@ window.addEventListener('pagehide', savePrefsOnExit);
 window.addEventListener('beforeunload', savePrefsOnExit);
 
 setPaths(DEFAULTS);
+if (el.altiumExe) el.altiumExe.value = DEFAULTS.altiumExe;
 for (const field of PATH_FIELDS) renderSavedPaths(field);
 
 // The portable build runs from a different folder; take the three defaults
@@ -622,6 +657,7 @@ for (const field of PATH_FIELDS) renderSavedPaths(field);
     const res = await fetch(PREFS_API, { cache: 'no-store' });
     const data = await res.json();
     if (data && data.ok && data.prefs) applyPrefs(data.prefs);
+    if (data && data.ok && data.altium) renderAltiumStatus(data.altium);
   } catch { /* keep the localStorage fallback */ }
   el.q.focus();
 })();

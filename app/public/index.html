@@ -74,6 +74,22 @@
           <button id="del-pcbLib" class="link" type="button">删除</button>
         </div>
       </div>
+
+      <div class="field">
+        <label for="altiumExe">Altium Designer 程序（X2.EXE）</label>
+        <div class="path-row">
+          <input id="altiumExe" type="text" spellcheck="false" placeholder="E:\AD\AD\X2.EXE">
+          <button id="browse-altiumExe" class="browse" type="button">浏览…</button>
+        </div>
+        <div class="saved-row">
+          <select id="altiumExeSaved" aria-label="常用 Altium 程序路径">
+            <option value="">常用 Altium 路径…</option>
+          </select>
+          <button id="save-altiumExe" class="link" type="button">保存当前</button>
+          <button id="del-altiumExe" class="link" type="button">删除</button>
+        </div>
+        <p id="altium-status" class="hint" hidden></p>
+      </div>
     </div>
     <p id="path-status" class="hint" hidden></p>
     <div class="row">

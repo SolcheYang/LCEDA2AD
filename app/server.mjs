@@ -25,12 +25,18 @@ const PIPELINE_SCRIPT = path.join(ROOT_DIR, 'altium', 'run-stages.mjs');
 
 const HOST = '127.0.0.1';
 
+// Altium Designer 主程序：优先级 环境变量 ALTIUM_EXE > 页面保存的配置 > 默认值。
+// 页面里可随时改，保存后写进 state 目录的 ui-prefs.json，关闭程序/重启服务都不会丢。
+const DEFAULT_ALTIUM_EXE = 'E:\\AD\\AD\\X2.EXE';
+const ALTIUM_EXE_ENV = String(process.env.ALTIUM_EXE || '').trim();
+
 // 管线的输出位置是写死的（altium/run-stages.mjs 只认 <cwd>/out 与 <cwd>/library/MyLib.*，
 // 没有提供 OUT_DIR/LIB_* 之类的环境变量），所以这里如实声明“生效路径”，不假装可配。
 const DEFAULTS = {
   outDir: path.join(ROOT_DIR, 'out'),
   schLib: path.join(ROOT_DIR, 'library', 'MyLib.SchLib'),
   pcbLib: path.join(ROOT_DIR, 'library', 'MyLib.PcbLib'),
+  altiumExe: DEFAULT_ALTIUM_EXE,
 };
 // altium/run-stages.mjs 从这些环境变量读输出位置；请求里的三个路径就通过它们传给管线
 const PATH_ENV = { outDir: 'OUT_DIR', schLib: 'LIB_SCH', pcbLib: 'LIB_PCB' };
@@ -39,7 +45,7 @@ const PATH_ENV = { outDir: 'OUT_DIR', schLib: 'LIB_SCH', pcbLib: 'LIB_PCB' };
 // 浏览器 localStorage 会随端口/站点数据清理而丢失（便携版尤其明显），
 // 所以把「常用目录 / 常用 SchLib / 常用 PcbLib」以及上次使用的路径写到
 // 启动器同一个 state 目录；关闭程序、重启服务后仍然保留。
-const PREF_KEYS = ['outDir', 'schLib', 'pcbLib'];
+const PREF_KEYS = ['outDir', 'schLib', 'pcbLib', 'altiumExe'];
 function expandEnvVars(value) {
   return String(value).replace(/%([^%]+)%/g, (all, name) => {
     const v = process.env[name] ?? process.env[name.toUpperCase()];
@@ -59,7 +65,9 @@ function resolveStateDir() {
   return path.resolve(dir);
 }
 const PREFS_FILE = path.join(resolveStateDir(), 'ui-prefs.json');
-const emptyPrefs = () => ({ paths: {}, lists: { outDir: [], schLib: [], pcbLib: [] }, options: {} });
+const emptyPrefs = () => ({
+  paths: {}, lists: { outDir: [], schLib: [], pcbLib: [], altiumExe: [] }, options: {},
+});
 
 function cleanPathList(value) {
   if (!Array.isArray(value)) return [];
@@ -112,16 +120,31 @@ async function writePrefs(prefs) {
   await fsp.rename(tmp, PREFS_FILE);
 }
 
+/** 实际生效的 Altium 可执行文件：环境变量 > 页面保存值 > 默认值。 */
+function resolveAltiumExe(prefs) {
+  if (ALTIUM_EXE_ENV) return { exe: expandEnvVars(ALTIUM_EXE_ENV), source: 'env' };
+  const saved = String((prefs && prefs.paths && prefs.paths.altiumExe) || '').trim();
+  if (saved) return { exe: expandEnvVars(saved), source: 'prefs' };
+  return { exe: DEFAULT_ALTIUM_EXE, source: 'default' };
+}
+const ALTIUM_SOURCE_LABEL = { env: '环境变量 ALTIUM_EXE', prefs: '页面配置', default: '默认值' };
+/** 给 UI 用的配置快照：生效路径、来源、文件是否存在。 */
+async function altiumInfo() {
+  const { exe, source } = resolveAltiumExe(await readPrefs());
+  let exists = false;
+  try { exists = (await fsp.stat(exe)).isFile(); } catch { exists = false; }
+  return { path: exe, source, sourceLabel: ALTIUM_SOURCE_LABEL[source], exists, default: DEFAULT_ALTIUM_EXE };
+}
+
 const SEARCH_TIMEOUT_MS = 30000;
 const DATA_TIMEOUT_MS = 60000;
 const PIPELINE_TIMEOUT_MS = positiveInt(process.env.PIPELINE_TIMEOUT_MS) ?? 20 * 60 * 1000;
 const PICK_SCRIPT = path.join(ROOT_DIR, 'tools', 'pick-path.ps1');
 const PICK_TIMEOUT_MS = 10 * 60 * 1000;
-const PICK_MODES = new Set(['folder', 'schlib', 'pcblib']);
+const PICK_MODES = new Set(['folder', 'schlib', 'pcblib', 'exe']);
 const MAX_LOG_LINES = 3000;
 const LOG_TAIL_LINES = 400;
 const KEEP_JOBS = 20;
-const ALTIUM_EXE = process.env.ALTIUM_EXE || 'E:\\AD\\AD\\X2.EXE';
 const LCSC_RE = /^c\d+$/i;
 
 const JOB_STEP_NAMES = ['解析输入', '获取元件数据并生成文档', 'Altium 脚本 PcbLib', 'Altium 脚本 SchLib', '校验产物'];
@@ -455,8 +478,9 @@ function classifyFailure(job, { code, timedOut }) {
   }
   if (/failed at stage schlib|failed at stage pcblib/.test(low)) {
     if (job.altiumPresent === false) {
-      return 'Altium 未安装或路径不对：找不到 ' + ALTIUM_EXE + '。请安装 Altium Designer，'
-        + '或用环境变量 ALTIUM_EXE 指向 X2.EXE 后重试（服务与管线都读这个变量）。';
+      return 'Altium 未安装或路径不对：找不到 ' + (job.altiumExe || DEFAULT_ALTIUM_EXE) + '。'
+        + '请在页面「输出位置 → Altium Designer 程序」里改成正确的 X2.EXE 路径（保存后重启仍生效），'
+        + '或用环境变量 ALTIUM_EXE 指定。';
     }
     const stage = /failed at stage (\w+)/.exec(low)[1];
     return 'Altium 脚本阶段失败（' + stage + '）：Altium 已启动但脚本没跑完，通常是弹窗/超时/对话框拦住。'
@@ -507,6 +531,8 @@ function runPipeline(job, lcsc, paths, options = {}) {
     env[PATH_ENV.pcbLib] = paths.pcbLib;
     env.KEEP_DOCS = options.keepDocs ? '1' : '0';
     env.MAKE_PART_LIBS = options.makePartLibs ? '1' : '0';
+    // 页面里配置的 Altium 路径通过环境变量传给管线（run-stages/emit-*/run-altium 都读它）。
+    env.ALTIUM_EXE = job.altiumExe || DEFAULT_ALTIUM_EXE;
     // UI 不暴露 fixture 开关：只有运维在服务进程环境里显式设置 ALLOW_FIXTURE=1 才会用 test/tmp-out 的调试数据
     delete env.ALLOW_FIXTURE;
     const child = spawn(process.execPath, [PIPELINE_SCRIPT, lcsc], {
@@ -598,13 +624,16 @@ async function runBuildJob(job) {
     logLine(job, '本次原理图库：' + job.paths.schLib);
     logLine(job, '本次封装库  ：' + job.paths.pcbLib);
 
+    const altium = resolveAltiumExe(await readPrefs());
+    job.altiumExe = altium.exe;
+    logLine(job, '本次 Altium：' + altium.exe + '（来源：' + ALTIUM_SOURCE_LABEL[altium.source] + '）');
     try {
-      const st = await fsp.stat(ALTIUM_EXE);
+      const st = await fsp.stat(altium.exe);
       job.altiumPresent = st.isFile();
     } catch { job.altiumPresent = false; }
     if (!job.altiumPresent) {
-      logLine(job, '警告：未找到 ' + ALTIUM_EXE + ' —— 文档生成仍可完成，但 Altium 脚本阶段会失败。');
-      setStep(job, '环境检查', 'warn', '未找到 ' + ALTIUM_EXE);
+      logLine(job, '警告：未找到 ' + altium.exe + ' —— 文档生成仍可完成，但 Altium 脚本阶段会失败。');
+      setStep(job, '环境检查', 'warn', '未找到 ' + altium.exe);
     }
 
     // 1. 解析输入
@@ -792,7 +821,7 @@ async function serveStatic(req, res, pathname) {
 // ───────────────────────────── API 处理 ─────────────────────────────
 // 启动器用它判断“这个端口上跑的是不是本工程的服务”，并取得 pid 用于停止。
 // 服务仅监听 127.0.0.1，返回内容不含敏感信息。
-function apiHealth(res) {
+async function apiHealth(res) {
   return sendJson(res, {
     ok: true,
     app: 'lceda2altium',
@@ -805,13 +834,14 @@ function apiHealth(res) {
     // 便携版/多副本时，UI 的默认路径必须跟随本实例的根目录，而不是写死原工程路径。
     defaults: DEFAULTS,
     prefsFile: PREFS_FILE,
+    altium: await altiumInfo(),
   });
 }
 
 // GET /api/prefs -> 常用路径列表、上次使用的三个路径、复选框状态。
 async function apiPrefsGet(res) {
   const prefs = await readPrefs();
-  return sendJson(res, { ok: true, prefs, defaults: DEFAULTS, file: PREFS_FILE });
+  return sendJson(res, { ok: true, prefs, defaults: DEFAULTS, file: PREFS_FILE, altium: await altiumInfo() });
 }
 
 // POST /api/prefs { prefs?: { paths?, lists?, options? } }
@@ -824,7 +854,8 @@ async function apiPrefsPost(req, res) {
   try {
     const next = cleanPrefs(payload, await readPrefs());
     await writePrefs(next);
-    return sendJson(res, { ok: true, prefs: next, file: PREFS_FILE });
+    // 顺带回传生效的 Altium 路径与是否存在，UI 可以立刻提示“路径不对”。
+    return sendJson(res, { ok: true, prefs: next, file: PREFS_FILE, altium: await altiumInfo() });
   } catch (err) {
     return sendJson(res, { ok: false, error: '保存常用路径失败：' + readableError(err) });
   }
@@ -935,7 +966,8 @@ async function apiPickPath(req, res) {
       return reply(400, { ok: false, error: '未知的选择类型：' + mode });
     }
     const fallback = mode === 'folder' ? DEFAULTS.outDir
-      : (mode === 'schlib' ? DEFAULTS.schLib : DEFAULTS.pcbLib);
+      : (mode === 'schlib' ? DEFAULTS.schLib
+        : (mode === 'pcblib' ? DEFAULTS.pcbLib : resolveAltiumExe(await readPrefs()).exe));
     const target = resolvePathInput(body.current, fallback);
     const initialDir = mode === 'folder' ? target : path.dirname(target);
     const fileName = mode === 'folder' ? '' : path.basename(target);
@@ -1076,6 +1108,9 @@ server.listen(PORT, HOST, async () => {
   console.log('  执行管线：node altium/run-stages.mjs <C编号>（数据 API → 本地文档 + Altium 脚本，无浏览器/无点击）');
   console.log('  默认输出：' + DEFAULTS.outDir + '（页面里可改，经 OUT_DIR/LIB_SCH/LIB_PCB 传给管线）');
   console.log('  默认目标库：' + DEFAULTS.schLib + ' / ' + DEFAULTS.pcbLib);
+  const altium = await altiumInfo();
+  console.log('  Altium 程序：' + altium.path + '（' + (altium.exists ? '已找到' : '未找到') +
+    '，来源：' + altium.sourceLabel + '；页面可改，保存在 ' + PREFS_FILE + '）');
   for (const key of Object.keys(LAYERS)) {
     const spec = LAYERS[key];
     let ready = false;

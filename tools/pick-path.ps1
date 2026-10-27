@@ -8,7 +8,7 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('folder', 'schlib', 'pcblib')]
+  [ValidateSet('folder', 'schlib', 'pcblib', 'exe')]
   [string]$Mode = 'folder',
   [string]$InitialDir = '',
   [string]$FileName = ''
@@ -48,6 +48,19 @@ try {
     if ($InitialDir -and (Test-Path -LiteralPath $InitialDir -PathType Container)) {
       $dialog.SelectedPath = (Resolve-Path -LiteralPath $InitialDir).Path
     }
+  } elseif ($Mode -eq 'exe') {
+    # 选已有的可执行文件（Altium Designer 主程序，通常是 X2.EXE）
+    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+    $dialog.CheckFileExists = $true
+    $dialog.CheckPathExists = $true
+    $dialog.AddExtension = $false
+    $dialog.RestoreDirectory = $true
+    $dialog.Title = '选择 Altium Designer 主程序（通常是 X2.EXE）'
+    $dialog.Filter = '可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*'
+    if ($InitialDir -and (Test-Path -LiteralPath $InitialDir -PathType Container)) {
+      $dialog.InitialDirectory = (Resolve-Path -LiteralPath $InitialDir).Path
+    }
+    if ($FileName) { $dialog.FileName = $FileName }
   } else {
     $dialog = New-Object System.Windows.Forms.SaveFileDialog
     $dialog.CheckFileExists = $false
