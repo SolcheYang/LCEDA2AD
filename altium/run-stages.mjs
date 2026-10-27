@@ -251,7 +251,15 @@ function checkPcbLib(file, component, label) {
     return true;
   } catch (err) {
     const out = String((err && err.stdout) || '').trim() + String((err && err.stderr) || '').trim();
-    if (err && err.code === 'ENOENT' || /No module named olefile/.test(out)) {
+    // 工具链不可用 ≠ 元件没有图元。没装 Python、没装 olefile、或 `python` 只是
+    // Microsoft Store 的占位别名时，都必须按“跳过校验”处理，否则会误报断言失败。
+    // pcblib-check.py 用退出码 3 明确表示“olefile 不可用”；字符串判据兼容旧版副本。
+    const toolUnavailable = (err && (err.code === 'ENOENT' || err.status === 3))
+      || /"ok"\s*:\s*null/i.test(out)
+      || /No module named '?olefile'?/i.test(out)
+      || /olefile not installed/i.test(out)
+      || /Python was not found|Microsoft Store/i.test(out);
+    if (toolUnavailable) {
       log('PADCHECK ' + label + ': skipped (python/olefile unavailable)');
       return null;
     }

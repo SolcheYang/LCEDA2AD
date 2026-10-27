@@ -26,7 +26,7 @@
 | 网络 | 能访问 `easyeda.com` 的公开接口 |
 | 浏览器 | **不需要**（Chrome 已从当前流程移除）；`启动.vbs` 打开界面时优先用 Edge/Chrome 应用窗口 |
 | Windows Script Host | `启动.vbs` / `停止服务.vbs` 依赖它（Win10/11 默认可用）。若被组策略禁用，改用 `run.cmd` |
-| Python（可选） | PcbLib 文件级校验用（`olefile`）；缺失时跳过校验，不影响生成 |
+| Python（可选） | PcbLib 文件级校验用。**olefile 已随仓库附带**（`tools/vendor/olefile`），clone 下来无需 `pip install`；优先用系统已装的 olefile，没有就用自带副本。连 Python 都没有时自动跳过校验，不影响生成 |
 
 ### Altium 可以保持打开
 
@@ -422,6 +422,7 @@ jobs\_lib-registry.json            内部版本登记表
 | `生成的 SchDoc/PcbDoc ... 不一致` | 数据接口返回异常；看 `jobs\<C编号>\parsed-docs.json` |
 | `Altium 脚本阶段失败` | 看页面实时日志里的 `STEP/OK/ERR` 与 `STAGE` 行；失败时中间文件会保留便于排查 |
 | `Altium 未安装或路径不对` | 在页面「输出位置 → Altium Designer 程序」里选到 `X2.EXE` 并保存（或设置环境变量 `ALTIUM_EXE`） |
+| `产物断言未通过：target PcbLib: component has no persisted primitives` | 先看实时日志里的 `PADCHECK` 行：写 `skipped (python/olefile unavailable)` 说明本机没有可用的 Python/olefile（仓库已自带副本，正常不会再出现），元件其实是好的；只有 `PADCHECK ... FAILED` 才是真的没写进图元 |
 | 双击 `启动.vbs` 没反应 | 看 `%LOCALAPPDATA%\LCEDA2Altium\server.err.log`；确认 Node 18+；若系统禁用 Windows Script Host，改用 `run.cmd` |
 | 停止服务提示“没有检测到…” | 服务已停止；若还有 `run.cmd` 控制台窗口，直接关闭即可 |
 | 端口占用 | `启动.vbs` 会自动换到空闲端口；`run.cmd` 可 `set PORT=43181` 后重启 |

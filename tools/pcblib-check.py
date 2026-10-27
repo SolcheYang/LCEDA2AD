@@ -7,13 +7,24 @@ or more. Exit 0 only when the wanted component (or, as a fallback, any component
 has a non-trivial Data stream.
 """
 import json
+import os
 import sys
 
 try:
     import olefile
 except ImportError:
-    print(json.dumps({"ok": None, "reason": "olefile not installed"}))
-    sys.exit(2)
+    # 仓库自带一份（tools/vendor/olefile，BSD-2-Clause 许可），git clone 后
+    # 无需 pip install；只有这份副本也缺失时才跳过校验。
+    vendor = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+    if os.path.isdir(vendor):
+        sys.path.insert(0, vendor)
+    try:
+        import olefile
+    except ImportError:
+        # 退出码 3 = "校验工具不可用"，与 1（元件确实没有图元）严格区分，
+        # 调用方据此跳过校验，不能把它当成断言失败。
+        print(json.dumps({"ok": None, "reason": "olefile not installed (vendored copy missing too)"}))
+        sys.exit(3)
 
 if len(sys.argv) < 2:
     print(json.dumps({"ok": False, "reason": "usage: pcblib-check.py <lib> [component-name]"}))
