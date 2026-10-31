@@ -15,6 +15,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { createUpdateChecker } from './lib/update-check.mjs';
+import { renderSymbolSvg, renderFootprintSvg } from './lib/preview-svg.mjs';
 
 // ───────────────────────────── 基础配置 ─────────────────────────────
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url)); // <root>/app
@@ -138,6 +140,11 @@ async function altiumInfo() {
 
 const SEARCH_TIMEOUT_MS = 30000;
 const DATA_TIMEOUT_MS = 60000;
+// 选中候选后右侧显示符号/封装预览：数据只读，渲染结果缓存 10 分钟，
+// 避免在候选列表里来回点时重复打 EasyEDA 接口。
+const PREVIEW_TIMEOUT_MS = 30000;
+const PREVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+const PREVIEW_CACHE_MAX = 40;
 const PIPELINE_TIMEOUT_MS = positiveInt(process.env.PIPELINE_TIMEOUT_MS) ?? 20 * 60 * 1000;
 const PICK_SCRIPT = path.join(ROOT_DIR, 'tools', 'pick-path.ps1');
 const PICK_TIMEOUT_MS = 10 * 60 * 1000;
@@ -158,6 +165,15 @@ const PORT = positiveInt(cliFlagValue('--port')) ?? positiveInt(process.env.PORT
 const OPEN_BROWSER = process.argv.includes('--open');
 const APP_VERSION = '1.0.0';
 const STARTED_AT = new Date().toISOString();
+
+// 更新检查：比对远端 origin 的版本 tag 与本地当前 tag；结果缓存 10 分钟。
+// 它只读（git ls-remote，不 fetch、不改本地仓库），页面拿到结果后弹窗提示，
+// 用户可以「暂不更新」或「忽略此版本」，服务端不会自动更新代码。
+const UPDATER = createUpdateChecker({
+  rootDir: ROOT_DIR,
+  stateDir: resolveStateDir(),
+  appVersion: APP_VERSION,
+});
 
 // ───────────────────────── 数据层（延迟加载） ─────────────────────────
 const LAYERS = {
@@ -819,6 +835,12 @@ async function serveStatic(req, res, pathname) {
 }
 
 // ───────────────────────────── API 处理 ─────────────────────────────
+/** 只接受本服务页面发起的写请求（避免其它网站偷偷改“忽略此版本”）。 */
+function isLocalOrigin(req) {
+  const origin = String(req.headers.origin || '');
+  return !origin || origin === 'http://' + HOST + ':' + PORT || origin === 'http://localhost:' + PORT;
+}
+
 // 启动器用它判断“这个端口上跑的是不是本工程的服务”，并取得 pid 用于停止。
 // 服务仅监听 127.0.0.1，返回内容不含敏感信息。
 async function apiHealth(res) {
@@ -861,6 +883,51 @@ async function apiPrefsPost(req, res) {
   }
 }
 
+/** 对外只暴露 UI 需要的字段（hasUpdateRaw 是内部比较结果）。 */
+function publicUpdateStatus(status) {
+  if (!status || typeof status !== 'object') return status;
+  const { hasUpdateRaw, ...rest } = status;
+  return rest;
+}
+
+// GET /api/update -> 缓存的更新状态；缓存过期时在后台刷新，不阻塞页面加载。
+async function apiUpdateGet(res) {
+  const first = UPDATER.peek();
+  if ((!first.result || first.stale) && !first.checking) void UPDATER.refresh().catch(() => {});
+  const state = UPDATER.peek();
+  const payload = publicUpdateStatus(state.result) || {
+    ok: true, supported: null, hasUpdate: false, checking: true, checkedAt: null,
+  };
+  return sendJson(res, { ...payload, checking: state.checking });
+}
+
+// POST /api/update/check -> 强制重新检查（页面上的「检查更新」）。
+async function apiUpdateCheck(req, res) {
+  if (!isLocalOrigin(req)) return sendJson(res, { ok: false, error: '拒绝跨站请求' }, 403);
+  const result = await UPDATER.refresh({ force: true });
+  return sendJson(res, publicUpdateStatus(result));
+}
+
+// POST /api/update/dismiss { tag, clear? }
+//   tag  = 用户选择「忽略此版本」的 tag（写入 state 目录，重启/换浏览器后仍生效）
+//   clear=true → 恢复提醒
+async function apiUpdateDismiss(req, res) {
+  if (!isLocalOrigin(req)) return sendJson(res, { ok: false, error: '拒绝跨站请求' }, 403);
+  let body;
+  try { body = await readJsonBody(req); }
+  catch (err) { return sendJson(res, { ok: false, error: readableError(err) }); }
+  const tag = typeof body.tag === 'string' ? body.tag.trim() : '';
+  const clear = body.clear === true;
+  if (!clear && !tag) return sendJson(res, { ok: false, error: '缺少要忽略的 tag' });
+  if (!clear && tag.length > 128) return sendJson(res, { ok: false, error: 'tag 太长' });
+  try {
+    const status = await UPDATER.setDismissed(tag, { clear });
+    return sendJson(res, { ok: true, status: publicUpdateStatus(status || UPDATER.peek().result) });
+  } catch (err) {
+    return sendJson(res, { ok: false, error: '保存忽略状态失败：' + readableError(err) });
+  }
+}
+
 async function apiSearch(url, res) {
   const q = (url.searchParams.get('q') || '').trim();
   if (!q) {
@@ -878,6 +945,74 @@ async function apiSearch(url, res) {
     const error = readableError(err);
     console.warn('[search] 失败：' + error);
     return sendJson(res, { ok: false, error });
+  }
+}
+
+/* ─────────────────── 预览（符号 SchLib / 封装 PcbLib） ─────────────────── */
+/** lcsc -> { at, payload }；payload 就是接口返回体（SVG 已渲染），命中直接复用。 */
+const previewCache = new Map();
+
+function previewCacheGet(lcsc) {
+  const hit = previewCache.get(lcsc);
+  if (!hit) return null;
+  if (nowMs() - hit.at > PREVIEW_CACHE_TTL_MS) {
+    previewCache.delete(lcsc);
+    return null;
+  }
+  return hit.payload;
+}
+
+function previewCacheSet(lcsc, payload) {
+  previewCache.delete(lcsc);
+  previewCache.set(lcsc, { at: nowMs(), payload });
+  while (previewCache.size > PREVIEW_CACHE_MAX) {
+    const oldest = previewCache.keys().next().value;
+    previewCache.delete(oldest);
+  }
+}
+
+async function apiPreview(url, res) {
+  const raw = (url.searchParams.get('lcsc') || url.searchParams.get('q') || '').trim();
+  if (!raw) {
+    return sendJson(res, { ok: false, error: '缺少查询参数 lcsc（立创编号，例如 C25804）' });
+  }
+  if (!LCSC_RE.test(raw)) {
+    return sendJson(res, { ok: false, error: '预览只支持立创编号（C 开头），收到：' + raw });
+  }
+  const lcsc = 'C' + raw.slice(1).toUpperCase();
+
+  const cached = previewCacheGet(lcsc);
+  if (cached) return sendJson(res, { ...cached, cached: true });
+
+  try {
+    const data = await loadLayer('data');
+    const model = await withTimeout(
+      data.fetchComponentModel(lcsc), PREVIEW_TIMEOUT_MS,
+      '预览加载超时（' + Math.round(PREVIEW_TIMEOUT_MS / 1000) + ' 秒），请检查网络后重试');
+    if (!model || typeof model !== 'object') {
+      return sendJson(res, { ok: false, error: '预览数据为空：' + lcsc });
+    }
+    const payload = {
+      ok: true,
+      lcsc: model.lcsc || lcsc,
+      mpn: model.mpn || '',
+      package: model.package || '',
+      value: model.value || '',
+      description: model.description || '',
+      pinCount: Array.isArray(model.symbol && model.symbol.pins) ? model.symbol.pins.length : 0,
+      padCount: Array.isArray(model.footprint && model.footprint.pads) ? model.footprint.pads.length : 0,
+      symbolSvg: renderSymbolSvg(model),
+      footprintSvg: renderFootprintSvg(model),
+    };
+    previewCacheSet(lcsc, payload);
+    console.log('[preview] ' + lcsc + ' 符号 ' + (payload.symbolSvg ? '✓' : '—') +
+      ' 封装 ' + (payload.footprintSvg ? '✓' : '—') +
+      '（引脚 ' + payload.pinCount + ' / 焊盘 ' + payload.padCount + '）');
+    return sendJson(res, payload);
+  } catch (err) {
+    const error = readableError(err);
+    console.warn('[preview] 失败：' + error);
+    return sendJson(res, { ok: false, error: '预览加载失败：' + error });
   }
 }
 
@@ -1049,12 +1184,14 @@ async function handle(req, res) {
     if (pathname === '/api/health') return apiHealth(res);
     if (pathname === '/api/prefs') return apiPrefsGet(res);
     if (pathname === '/api/search') return apiSearch(url, res);
+    if (pathname === '/api/preview') return apiPreview(url, res);
     if (pathname === '/api/job') return apiJob(url, res);
+    if (pathname === '/api/update') return apiUpdateGet(res);
     if (pathname === '/api/build') {
       return sendJson(res, { ok: false, error: '请使用 POST 调用 /api/build' });
     }
     if (pathname.startsWith('/api/')) {
-      return sendJson(res, { ok: false, error: '未知接口：' + pathname + '（可用：/api/health、/api/prefs、/api/search、/api/build、/api/job、/api/pick-path）' });
+      return sendJson(res, { ok: false, error: '未知接口：' + pathname + '（可用：/api/health、/api/prefs、/api/search、/api/preview、/api/build、/api/job、/api/pick-path、/api/update）' });
     }
     return serveStatic(req, res, pathname);
   }
@@ -1062,6 +1199,8 @@ async function handle(req, res) {
     if (pathname === '/api/prefs') return apiPrefsPost(req, res);
     if (pathname === '/api/pick-path') return apiPickPath(req, res);
     if (pathname === '/api/build') return apiBuild(req, res);
+    if (pathname === '/api/update/check') return apiUpdateCheck(req, res);
+    if (pathname === '/api/update/dismiss') return apiUpdateDismiss(req, res);
     if (pathname.startsWith('/api/')) {
       return sendJson(res, { ok: false, error: '不支持的方法：POST ' + pathname });
     }
@@ -1124,6 +1263,21 @@ server.listen(PORT, HOST, async () => {
   let pipelineReady = false;
   try { pipelineReady = (await fsp.stat(PIPELINE_SCRIPT)).isFile(); } catch { pipelineReady = false; }
   console.log('  管线状态：altium/run-stages.mjs ' + (pipelineReady ? '已就绪' : '缺失（生成会失败）'));
+  // 启动后台检查远端 tag（不阻塞启动）；结果由页面弹窗展示，绝不自动更新代码。
+  void UPDATER.refresh().then((r) => {
+    if (!r) return;
+    if (r.supported === false) {
+      console.log('  更新检查：' + (r.reason || '不可用'));
+    } else if (r.ok === false) {
+      console.log('  更新检查失败：' + r.error + '（页面右上角可手动重试）');
+    } else if (r.hasUpdate && r.latest) {
+      console.log('  发现新版本：' + r.latest.tag + '（当前 ' +
+        ((r.current && r.current.tag) || '未知') + '）—— 页面会弹窗提示，可选择暂不更新');
+    } else {
+      console.log('  更新检查：已是最新' +
+        (r.current && r.current.tag ? '（' + r.current.tag + '）' : ''));
+    }
+  }).catch(() => { /* 检查失败不影响服务 */ });
   console.log('  按 Ctrl+C 停止服务');
   console.log('');
   if (OPEN_BROWSER) setTimeout(() => openBrowser(base), 300);

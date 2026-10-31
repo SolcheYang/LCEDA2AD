@@ -30,7 +30,16 @@ const el = {
   buildBtn: $('build-btn'), jobState: $('job-state'), jobId: $('job-id'), buildError: $('build-error'),
   resetPaths: $('reset-paths'), jobCounts: $('job-counts'),
   steps: $('steps'), log: $('log'), logCopy: $('log-copy'), logFollow: $('log-follow'),
+  logCard: $('log-card'), logToggle: $('log-toggle'), progressEmpty: $('progress-empty'),
+  previewMeta: $('preview-meta'), previewEmpty: $('preview-empty'),
+  previewPanes: $('preview-panes'), previewSymbol: $('preview-symbol'), previewPcb: $('preview-pcb'),
   artifacts: $('artifacts'),
+  verChip: $('ver-chip'), updateModal: $('update-modal'), updateClose: $('update-close'),
+  updateSub: $('update-sub'), updateNotes: $('update-notes'),
+  verCurrent: $('ver-current'), verCurrentMeta: $('ver-current-meta'),
+  verLatest: $('ver-latest'), verLatestMeta: $('ver-latest-meta'),
+  updateLater: $('update-later'), updateView: $('update-view'), updateCopy: $('update-copy'),
+  updateIgnore: $('update-ignore'), updateRestore: $('update-restore'), updateHint: $('update-hint'),
 };
 
 let selected = null;
@@ -382,6 +391,59 @@ function selectCandidate(cand, row) {
   el.q.value = cand.lcsc || el.q.value;
   el.searchStatus.className = 'hint';
   el.searchStatus.textContent = '已选中 ' + cand.lcsc + '　' + (cand.mpn || '') + '　' + (cand.package || '');
+  void loadPreview(cand.lcsc);
+}
+
+/* ─────────────── 预览：选中候选后显示符号（SchLib）与封装（PcbLib） ─────────────── */
+const PREVIEW_API = '/api/preview';
+let previewSeq = 0;
+
+function previewNote(node, text) {
+  node.innerHTML = '';
+  const note = document.createElement('p');
+  note.className = 'pv-note';
+  note.textContent = text;
+  node.appendChild(note);
+}
+
+function setPreviewMessage(text, isError) {
+  el.previewPanes.hidden = true;
+  el.previewEmpty.hidden = false;
+  el.previewEmpty.className = 'preview-empty' + (isError ? ' error-state' : '');
+  el.previewEmpty.textContent = text;
+}
+
+function renderPreview(data) {
+  el.previewEmpty.hidden = true;
+  el.previewPanes.hidden = false;
+  const meta = [data.lcsc, data.mpn, data.package].filter(Boolean).join(' · ');
+  el.previewMeta.textContent = meta;
+  el.previewMeta.title = meta;
+  // SVG 由本地服务端根据解析出的几何数据生成（文本已转义），直接内嵌。
+  if (data.symbolSvg) el.previewSymbol.innerHTML = data.symbolSvg;
+  else previewNote(el.previewSymbol, '该元件没有符号数据');
+  if (data.footprintSvg) el.previewPcb.innerHTML = data.footprintSvg;
+  else previewNote(el.previewPcb, '该元件没有封装数据');
+}
+
+async function loadPreview(lcsc) {
+  const id = String(lcsc || '').trim();
+  if (!id) return;
+  const seq = ++previewSeq; // 连续点选不同候选时，只有最后一次的响应生效
+  el.previewMeta.textContent = id;
+  el.previewMeta.title = '';
+  setPreviewMessage('正在加载 ' + id + ' 的符号与封装…', false);
+  try {
+    const res = await fetch(PREVIEW_API + '?lcsc=' + encodeURIComponent(id), { cache: 'no-store' });
+    const data = await res.json();
+    if (seq !== previewSeq) return;
+    if (!data.ok) throw new Error(data.error || '预览加载失败');
+    renderPreview(data);
+  } catch (err) {
+    if (seq !== previewSeq) return;
+    el.previewMeta.textContent = id;
+    setPreviewMessage('预览加载失败：' + (err && err.message ? err.message : err), true);
+  }
 }
 
 /* ─────────────── 生成 / 轮询 ─────────────── */
@@ -397,6 +459,7 @@ async function doBuild() {
   el.jobId.textContent = '';
   el.jobState.hidden = true;
   el.steps.hidden = true;
+  if (el.progressEmpty) el.progressEmpty.hidden = false;
   el.jobCounts.hidden = true;
   el.artifacts.innerHTML = '<li class="hint">尚无产物</li>';
   setLogText('（等待后端启动作业…）');
@@ -466,6 +529,8 @@ function finishBuild() {
   stopPolling();
   el.buildBtn.disabled = false;
   el.buildBtn.textContent = '生成（无浏览器 + Altium 脚本）';
+  // 生成期间如果有更新提示被推迟，作业结束后再弹（不遮挡正在看的日志）。
+  maybeShowUpdateModal();
 }
 
 function renderJob(job) {
@@ -486,6 +551,7 @@ function renderJob(job) {
   }
 
   el.steps.hidden = false;
+  if (el.progressEmpty) el.progressEmpty.hidden = true;
   el.steps.innerHTML = '';
   for (const step of job.steps || []) {
     const status = STEP_ICON[step.status] ? step.status : 'pending';
@@ -559,6 +625,7 @@ function renderArtifacts(list) {
     const p = document.createElement('span');
     p.className = 'p' + (art.exists ? '' : ' miss');
     p.textContent = art.path || '';
+    p.title = art.path || '';
     const sz = document.createElement('span');
     sz.className = 'sz';
     sz.textContent = art.exists ? formatSize(art.size) : '未生成';
@@ -581,6 +648,282 @@ function formatSize(size) {
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   return (n / 1024 / 1024).toFixed(1) + ' MB';
 }
+
+/* ─────────────── 更新提示（远端 tag 推送） ─────────────── */
+// 服务端用 git ls-remote 对比远端 tag 与当前版本（只读，不 fetch）。
+// 发现新 tag 时弹窗；「暂不更新」只在本标签页隐藏，「忽略此版本」写入服务端 state。
+const UPDATE_POLL_MS = 10 * 60 * 1000;
+const UPDATE_SESSION_KEY = 'lceda2altium.updateIgnored.v1';
+let updateState = null;
+let updatePollTimer = null;
+let updateLoadAttempts = 0;
+let updateModalTag = null;
+let updateLastFocus = null;
+
+function readSessionIgnored() {
+  try {
+    const list = JSON.parse(sessionStorage.getItem(UPDATE_SESSION_KEY) || '[]');
+    return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+function addSessionIgnored(tag) {
+  if (!tag) return;
+  const list = readSessionIgnored();
+  if (!list.includes(tag)) list.push(tag);
+  try { sessionStorage.setItem(UPDATE_SESSION_KEY, JSON.stringify(list)); } catch { /* 隐私模式忽略 */ }
+}
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+const metaLine = (parts) => parts.filter(Boolean).join(' · ');
+
+function currentVersionLabel() {
+  if (!updateState || !updateState.current) return '';
+  return updateState.current.tag || updateState.current.version || '';
+}
+
+function renderVersionChip() {
+  const chip = el.verChip;
+  if (!chip) return;
+  chip.classList.remove('update', 'muted');
+  chip.disabled = false;
+  const cur = currentVersionLabel();
+  const st = updateState;
+  if (!st) { chip.textContent = '版本 …'; chip.title = '正在检查更新'; return; }
+
+  if (st.supported === false) {
+    chip.classList.add('muted');
+    chip.textContent = cur ? '版本 ' + cur : '本地副本';
+    chip.title = st.reason || '当前目录不是 git 工作区，不检查更新';
+    return;
+  }
+  if (st.ok === false) {
+    chip.textContent = cur ? '版本 ' + cur : '版本';
+    chip.title = (st.error || '检查更新失败') + '（点击重试）';
+    return;
+  }
+  if (st.hasUpdate && st.latest) {
+    chip.classList.add('update');
+    chip.textContent = '↑ 新版本 ' + st.latest.tag;
+    chip.title = '当前 ' + (cur || '未知') + '；点击查看更新说明，可选择不更新';
+    return;
+  }
+  chip.textContent = cur ? '版本 ' + cur : '版本';
+  chip.title = st.dismissed && st.latest
+    ? '已忽略 ' + st.latest.tag + '；点击可恢复提醒'
+    : (st.checkedAt ? '已是最新（检查于 ' + fmtTime(st.checkedAt) + '）· 点击重新检查' : '点击检查更新');
+}
+
+function updateNotesText(st) {
+  const l = st.latest || {};
+  const lines = [];
+  lines.push('tag：' + (l.tag || '—') + (l.pushedAt ? '（推送于 ' + fmtTime(l.pushedAt) + '）' : ''));
+  if (l.commit || l.commitShort) lines.push('提交：' + (l.commitShort || String(l.commit).slice(0, 7)) + (l.author ? ' · ' + l.author : ''));
+  if (l.date) lines.push('时间：' + fmtTime(l.date));
+  if (l.subject) lines.push('说明：' + l.subject);
+  if (l.message && l.message !== l.subject) lines.push('tag 消息：' + l.message);
+  if (l.releaseNotes) lines.push('', '发布说明：', l.releaseNotes.slice(0, 4000));
+  return lines.join('\n');
+}
+
+function showUpdateModal() {
+  const st = updateState;
+  if (!st || !st.latest || !el.updateModal) return;
+  updateModalTag = st.latest.tag;
+  updateLastFocus = document.activeElement;
+  const cur = st.current || {};
+  const latest = st.latest || {};
+
+  el.verCurrent.textContent = cur.tag || cur.version || '—';
+  el.verCurrentMeta.textContent = metaLine([cur.commitShort, fmtTime(cur.date)]);
+  el.verLatest.textContent = latest.tag || '—';
+  el.verLatestMeta.textContent = metaLine([latest.commitShort, fmtTime(latest.date)]);
+
+  const notes = updateNotesText(st);
+  el.updateNotes.textContent = notes;
+  el.updateNotes.hidden = !notes;
+
+  el.updateSub.textContent = st.dismissed
+    ? '该版本已被你忽略；远端仍停在这个 tag。可以恢复提醒，或继续沿用当前版本。'
+    : '远端仓库推送了新 tag。是否更新由你决定，程序不会自动改动代码。';
+  el.updateIgnore.hidden = Boolean(st.dismissed);
+  el.updateRestore.hidden = !st.dismissed;
+
+  const url = latest.compareUrl || latest.url || (st.links && st.links.repo) || '';
+  el.updateView.dataset.url = url;
+  el.updateView.disabled = !url;
+
+  el.updateHint.className = 'hint';
+  el.updateHint.textContent = '「暂不更新」只在本次运行隐藏提示，下次启动仍会提醒；更新后需停止并重新启动本服务（常用路径与作业记录保存在 state 目录，不受影响）。';
+
+  el.updateModal.hidden = false;
+  document.body.classList.add('modal-open');
+  el.updateLater.focus();
+}
+
+function closeUpdateModal({ remember = true } = {}) {
+  if (!el.updateModal || el.updateModal.hidden) return;
+  if (remember && updateModalTag) addSessionIgnored(updateModalTag);
+  el.updateModal.hidden = true;
+  document.body.classList.remove('modal-open');
+  updateModalTag = null;
+  updateLoadAttempts = 0;
+  if (updateLastFocus && typeof updateLastFocus.focus === 'function') {
+    try { updateLastFocus.focus(); } catch { /* 元素已移除 */ }
+  }
+  updateLastFocus = null;
+}
+
+function maybeShowUpdateModal() {
+  const st = updateState;
+  if (!st || !st.hasUpdate || !st.latest) return;
+  if (!el.updateModal || !el.updateModal.hidden) return;
+  if (readSessionIgnored().includes(st.latest.tag)) return;
+  // 生成作业进行中不遮挡界面：finishBuild() 会补一次调用。
+  if (currentJobId && el.buildBtn.disabled) return;
+  showUpdateModal();
+}
+
+/** 拉取服务端缓存的状态；后台还在检查时自动重试几次。 */
+async function loadUpdateStatus() {
+  if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
+  try {
+    const res = await fetch('/api/update', { cache: 'no-store' });
+    const data = await res.json();
+    if (data && typeof data === 'object') updateState = data;
+    renderVersionChip();
+    if (data && data.checking && (data.supported === null || updateLoadAttempts < 6)) {
+      updateLoadAttempts += 1;
+      if (updateLoadAttempts <= 10) {
+        updatePollTimer = setTimeout(loadUpdateStatus, 2500);
+        return;
+      }
+    }
+    updateLoadAttempts = 0;
+    maybeShowUpdateModal();
+  } catch {
+    renderVersionChip();
+    if (el.verChip) el.verChip.title = '检查更新失败（服务是否还在运行？）';
+  }
+  updatePollTimer = setTimeout(loadUpdateStatus, UPDATE_POLL_MS);
+}
+
+/** 手动「检查更新」：强制刷新，等待服务端返回。 */
+async function checkUpdateNow() {
+  if (!el.verChip) return;
+  el.verChip.disabled = true;
+  el.verChip.textContent = '检查中…';
+  try {
+    const res = await fetch('/api/update/check', { method: 'POST' });
+    const data = await res.json();
+    if (data && typeof data === 'object') updateState = data;
+    renderVersionChip();
+    if (data && data.ok === false) {
+      el.verChip.textContent = '检查失败';
+      el.verChip.title = data.error || '检查更新失败';
+      setTimeout(renderVersionChip, 3000);
+      return;
+    }
+    if (data && data.hasUpdate) {
+      // 用户主动点「检查更新」时，即使本次已选过「暂不更新」也要打开弹窗。
+      showUpdateModal();
+    } else if (data && data.dismissed && data.latest) {
+      // 已忽略的版本：打开弹窗，里面可以「恢复提醒」。
+      showUpdateModal();
+    } else {
+      el.verChip.textContent = '已是最新';
+      setTimeout(renderVersionChip, 2200);
+    }
+  } catch (err) {
+    el.verChip.title = '检查更新失败：' + (err && err.message ? err.message : err);
+    renderVersionChip();
+  } finally {
+    el.verChip.disabled = false;
+  }
+}
+
+async function postUpdateDismiss(payload) {
+  const res = await fetch('/api/update/dismiss', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || '保存失败');
+  return data.status || null;
+}
+
+async function ignoreThisVersion() {
+  const tag = updateModalTag || (updateState && updateState.latest && updateState.latest.tag);
+  if (!tag) return;
+  try {
+    const status = await postUpdateDismiss({ tag });
+    updateState = status ? { ...updateState, ...status } : { ...updateState, hasUpdate: false, dismissed: true, dismissedTag: tag };
+    addSessionIgnored(tag);
+    closeUpdateModal({ remember: false });
+    renderVersionChip();
+    el.verChip.textContent = '已忽略 ' + tag;
+    el.verChip.title = '远端有新 tag 时会再次提示';
+    setTimeout(renderVersionChip, 2800);
+  } catch (err) {
+    el.updateHint.className = 'error';
+    el.updateHint.textContent = '保存忽略状态失败：' + (err && err.message ? err.message : err);
+  }
+}
+
+async function restoreUpdateReminder() {
+  const tag = (updateState && updateState.latest && updateState.latest.tag) || updateModalTag;
+  if (!tag) return;
+  try {
+    const status = await postUpdateDismiss({ tag, clear: true });
+    updateState = status ? { ...updateState, ...status } : { ...updateState, dismissed: false, hasUpdate: true };
+    renderVersionChip();
+    showUpdateModal();
+  } catch (err) {
+    el.updateHint.className = 'error';
+    el.updateHint.textContent = '恢复提醒失败：' + (err && err.message ? err.message : err);
+  }
+}
+
+async function copyUpdateCommand() {
+  const tag = (updateState && updateState.latest && updateState.latest.tag) || updateModalTag || '<tag>';
+  const cmd = 'git fetch --tags && git checkout ' + tag;
+  if (await copyText(cmd)) {
+    flash(el.updateCopy);
+  } else {
+    const old = el.updateCopy.textContent;
+    el.updateCopy.textContent = '复制失败';
+    setTimeout(() => { el.updateCopy.textContent = old; }, 1500);
+  }
+}
+
+if (el.verChip) el.verChip.addEventListener('click', checkUpdateNow);
+if (el.updateLater) el.updateLater.addEventListener('click', () => closeUpdateModal({ remember: true }));
+if (el.updateClose) el.updateClose.addEventListener('click', () => closeUpdateModal({ remember: true }));
+if (el.updateIgnore) el.updateIgnore.addEventListener('click', ignoreThisVersion);
+if (el.updateRestore) el.updateRestore.addEventListener('click', restoreUpdateReminder);
+if (el.updateCopy) el.updateCopy.addEventListener('click', copyUpdateCommand);
+if (el.updateView) {
+  el.updateView.addEventListener('click', () => {
+    const url = el.updateView.dataset.url;
+    if (url) window.open(url, '_blank', 'noopener');
+  });
+}
+if (el.updateModal) {
+  el.updateModal.addEventListener('click', (e) => {
+    if (e.target === el.updateModal) closeUpdateModal({ remember: true });
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && el.updateModal && !el.updateModal.hidden) {
+    e.preventDefault();
+    closeUpdateModal({ remember: true });
+  }
+});
 
 /* ─────────────── 绑定 ─────────────── */
 el.searchBtn.addEventListener('click', doSearch);
@@ -623,6 +966,27 @@ for (const box of [el.keepDocs, el.makePartLibs]) {
 el.logCopy.addEventListener('click', async () => {
   if (await copyText(lastLogText || '')) flash(el.logCopy);
 });
+
+/* 日志面板可收起：状态存 localStorage，下次打开沿用；收起后右侧只留标题栏。 */
+const LOG_COLLAPSED_KEY = 'lceda2altium.logCollapsed.v1';
+function applyLogCollapsed(collapsed) {
+  if (el.logCard) el.logCard.classList.toggle('collapsed', collapsed);
+  if (el.logToggle) {
+    el.logToggle.textContent = collapsed ? '显示日志' : '隐藏日志';
+    el.logToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+}
+function setLogCollapsed(collapsed) {
+  applyLogCollapsed(collapsed);
+  try { localStorage.setItem(LOG_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch { /* 隐私模式忽略 */ }
+}
+try { applyLogCollapsed(localStorage.getItem(LOG_COLLAPSED_KEY) === '1'); }
+catch { applyLogCollapsed(false); }
+if (el.logToggle) {
+  el.logToggle.addEventListener('click', () => {
+    setLogCollapsed(!(el.logCard && el.logCard.classList.contains('collapsed')));
+  });
+}
 // pagehide 在应用窗口关闭时也可能触发（beforeunload 不保证）；两处都发一次。
 function savePrefsOnExit() {
   stopPolling();
@@ -660,4 +1024,6 @@ for (const field of PATH_FIELDS) renderSavedPaths(field);
     if (data && data.ok && data.altium) renderAltiumStatus(data.altium);
   } catch { /* keep the localStorage fallback */ }
   el.q.focus();
+  // 检查远端 tag：服务端启动时已在后台检查，这里取缓存结果，不阻塞页面。
+  void loadUpdateStatus();
 })();

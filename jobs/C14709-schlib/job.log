@@ -1,0 +1,21 @@
+STEP schlib
+BS libref
+BS designitemid
+BS description
+BS designator
+BS commenttext
+BS commenthidden
+BS impl
+BS impl-created
+BS impl-modelname
+BS impl-modeltype
+BS impl-description
+BS impl-iscurrent
+BS impl-datalink
+BS impl-datalink-done
+BS impl-datalink-location
+BS impl-datalink-location-set
+BS impl-done
+OK schlib merged BLM18PG121SN1D into the existing target library
+COUNT schlib comps=1 pins=2 libref=BLM18PG121SN1D src=self-recorded+file-scan
+COUNT pcblib comps=0 before=0 pads=2 regions=5 skippedregions=0 name=L0603 src=model+file-check

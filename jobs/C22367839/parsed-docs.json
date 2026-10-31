@@ -1,0 +1,240 @@
+{
+  "sch": {
+    "libReference": "HHV1206R7475K101NSPJ",
+    "partCount": 1,
+    "location": {
+      "x": 2500,
+      "y": 2000
+    },
+    "pins": [
+      {
+        "number": "1",
+        "name": "1",
+        "x": -250,
+        "y": 0,
+        "length": 150,
+        "orient": 0,
+        "bodyX": -100,
+        "bodyY": 0,
+        "outwardOrient": 180,
+        "electrical": "unspecified",
+        "ownerPartId": 1
+      },
+      {
+        "number": "2",
+        "name": "2",
+        "x": 250,
+        "y": 0,
+        "length": 150,
+        "orient": 180,
+        "bodyX": 100,
+        "bodyY": 0,
+        "outwardOrient": 0,
+        "electrical": "unspecified",
+        "ownerPartId": 1
+      }
+    ],
+    "shapes": [
+      {
+        "kind": "polyline",
+        "points": [
+          [
+            -20,
+            -80
+          ],
+          [
+            -20,
+            80
+          ]
+        ],
+        "lineWidth": 1
+      },
+      {
+        "kind": "polyline",
+        "points": [
+          [
+            100,
+            0
+          ],
+          [
+            20,
+            0
+          ]
+        ],
+        "lineWidth": 1
+      },
+      {
+        "kind": "polyline",
+        "points": [
+          [
+            20,
+            80
+          ],
+          [
+            20,
+            -80
+          ]
+        ],
+        "lineWidth": 1
+      },
+      {
+        "kind": "polyline",
+        "points": [
+          [
+            -20,
+            0
+          ],
+          [
+            -100,
+            0
+          ]
+        ],
+        "lineWidth": 1
+      }
+    ],
+    "stats": {
+      "pins": 2,
+      "rects": 0,
+      "ellipses": 0,
+      "arcs": 0,
+      "polylines": 4,
+      "polygons": 0
+    }
+  },
+  "pcb": {
+    "pattern": "C1206",
+    "origin": {
+      "x": 3167.035,
+      "y": 3147.64
+    },
+    "rotation": 0,
+    "layer": "top",
+    "pads": [
+      {
+        "number": "2",
+        "x": 62.70080000000007,
+        "y": 0,
+        "w": 58.4646,
+        "h": 68.0315,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0,
+        "rotation": 0,
+        "plated": true
+      },
+      {
+        "number": "1",
+        "x": -62.70080000000007,
+        "y": 0,
+        "w": 58.4646,
+        "h": 68.0315,
+        "shape": "rect",
+        "layer": "top",
+        "hole": 0,
+        "rotation": 0,
+        "plated": true
+      }
+    ],
+    "tracks": [
+      {
+        "layer": "top_overlay",
+        "x1": 94.92910000000029,
+        "y1": 43.015699999999924,
+        "x2": 36.464600000000246,
+        "y2": 43.015699999999924,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": 36.464600000000246,
+        "y1": -43.015699999999924,
+        "x2": 94.92910000000029,
+        "y2": -43.015699999999924,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": 100.92910000000029,
+        "y1": -37.015699999999924,
+        "x2": 100.92910000000029,
+        "y2": 37.015699999999924,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -94.92909999999983,
+        "y1": 43.015699999999924,
+        "x2": -36.46459999999979,
+        "y2": 43.015699999999924,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -36.46459999999979,
+        "y1": -43.015699999999924,
+        "x2": -94.92909999999983,
+        "y2": -43.015699999999924,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x1": -100.92909999999983,
+        "y1": -37.015699999999924,
+        "x2": -100.92909999999983,
+        "y2": 37.015699999999924,
+        "width": 6
+      }
+    ],
+    "arcs": [
+      {
+        "layer": "top_overlay",
+        "x": 94.92910000000029,
+        "y": -37.015699999999924,
+        "r": 6,
+        "rx": 6,
+        "start": 270,
+        "end": 0,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x": 94.92910000000029,
+        "y": 37.015699999999924,
+        "r": 6,
+        "rx": 6,
+        "start": 0,
+        "end": 90,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x": -94.92909999999983,
+        "y": -37.015699999999924,
+        "r": 6,
+        "rx": 6,
+        "start": 180,
+        "end": 270,
+        "width": 6
+      },
+      {
+        "layer": "top_overlay",
+        "x": -94.92909999999983,
+        "y": 37.015699999999924,
+        "r": 6,
+        "rx": 6,
+        "start": 90,
+        "end": 180,
+        "width": 6
+      }
+    ],
+    "regions": 0,
+    "texts": 0,
+    "stats": {
+      "pads": 2,
+      "tracks": 6,
+      "arcs": 4,
+      "regions": 0,
+      "texts": 0
+    }
+  }
+}

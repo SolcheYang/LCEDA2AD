@@ -8,131 +8,205 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="wrap">
-    <h1>立创元件 → Altium</h1>
-    <p class="sub">输入型号或立创编号 → 直接写入目标 SchLib / PcbLib；可选保留临时文档与单件库。</p>
+  <div class="wrap topbar-inner">
+    <div>
+      <h1>立创元件 → Altium</h1>
+      <p class="sub">输入型号或立创编号 → 直接写入目标 SchLib / PcbLib；可选保留临时文档与单件库。</p>
+    </div>
+    <button id="ver-chip" class="ver-chip" type="button" title="点击检查更新">版本 …</button>
   </div>
 </header>
 
-<main class="wrap">
+<!-- 横屏工作区：左侧搜索与参数，右侧进度与日志 -->
+<main class="wrap workspace">
 
-  <section class="card">
-    <h2><span class="num">1</span>元件</h2>
-    <div class="row">
-      <input id="q" type="text" autocomplete="off" spellcheck="false"
-             placeholder="元件名称 / 型号 / 立创编号，例如 C25804、BQ7693003DBTR">
-      <button id="search-btn" class="primary" type="button">搜索</button>
-    </div>
-    <p id="search-status" class="hint">支持 C 编号或名称；也可以直接生成。</p>
-    <div id="candidates" class="candidates" hidden></div>
-  </section>
+  <div class="col col-left">
 
-  <section class="card">
-    <h2><span class="num">2</span>输出位置</h2>
-    <div class="fields">
-      <div class="field">
-        <label for="outDir">输出目录</label>
-        <div class="path-row">
-          <input id="outDir" type="text" spellcheck="false" placeholder="E:\EDA2Altium\out">
-          <button id="browse-outDir" class="browse" type="button">浏览…</button>
+    <section class="card">
+      <h2><span class="num">1</span>元件</h2>
+      <div class="row">
+        <input id="q" type="text" autocomplete="off" spellcheck="false"
+               placeholder="元件名称 / 型号 / 立创编号，例如 C25804、BQ7693003DBTR">
+        <button id="search-btn" class="primary" type="button">搜索</button>
+      </div>
+      <p id="search-status" class="hint">支持 C 编号或名称；也可以直接生成。</p>
+      <div id="candidates" class="candidates" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="num">2</span>输出位置</h2>
+      <div class="fields">
+        <div class="field">
+          <label for="outDir">输出目录</label>
+          <div class="path-row">
+            <input id="outDir" type="text" spellcheck="false" placeholder="E:\EDA2Altium\out">
+            <button id="browse-outDir" class="browse" type="button">浏览…</button>
+          </div>
+          <div class="saved-row">
+            <select id="outDirSaved" aria-label="常用输出目录">
+              <option value="">常用目录…</option>
+            </select>
+            <button id="save-outDir" class="link" type="button">保存当前</button>
+            <button id="del-outDir" class="link" type="button">删除</button>
+          </div>
         </div>
-        <div class="saved-row">
-          <select id="outDirSaved" aria-label="常用输出目录">
-            <option value="">常用目录…</option>
-          </select>
-          <button id="save-outDir" class="link" type="button">保存当前</button>
-          <button id="del-outDir" class="link" type="button">删除</button>
+
+        <div class="field">
+          <label for="schLib">目标原理图库 SchLib</label>
+          <div class="path-row">
+            <input id="schLib" type="text" spellcheck="false" placeholder="E:\EDA2Altium\library\MyLib.SchLib">
+            <button id="browse-schLib" class="browse" type="button">浏览…</button>
+          </div>
+          <div class="saved-row">
+            <select id="schLibSaved" aria-label="常用原理图库">
+              <option value="">常用 SchLib…</option>
+            </select>
+            <button id="save-schLib" class="link" type="button">保存当前</button>
+            <button id="del-schLib" class="link" type="button">删除</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="pcbLib">目标封装库 PcbLib</label>
+          <div class="path-row">
+            <input id="pcbLib" type="text" spellcheck="false" placeholder="E:\EDA2Altium\library\MyLib.PcbLib">
+            <button id="browse-pcbLib" class="browse" type="button">浏览…</button>
+          </div>
+          <div class="saved-row">
+            <select id="pcbLibSaved" aria-label="常用封装库">
+              <option value="">常用 PcbLib…</option>
+            </select>
+            <button id="save-pcbLib" class="link" type="button">保存当前</button>
+            <button id="del-pcbLib" class="link" type="button">删除</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="altiumExe">Altium Designer 程序（X2.EXE）</label>
+          <div class="path-row">
+            <input id="altiumExe" type="text" spellcheck="false" placeholder="E:\AD\AD\X2.EXE">
+            <button id="browse-altiumExe" class="browse" type="button">浏览…</button>
+          </div>
+          <div class="saved-row">
+            <select id="altiumExeSaved" aria-label="常用 Altium 程序路径">
+              <option value="">常用 Altium 路径…</option>
+            </select>
+            <button id="save-altiumExe" class="link" type="button">保存当前</button>
+            <button id="del-altiumExe" class="link" type="button">删除</button>
+          </div>
+          <p id="altium-status" class="hint" hidden></p>
         </div>
       </div>
-
-      <div class="field">
-        <label for="schLib">目标原理图库 SchLib</label>
-        <div class="path-row">
-          <input id="schLib" type="text" spellcheck="false" placeholder="E:\EDA2Altium\library\MyLib.SchLib">
-          <button id="browse-schLib" class="browse" type="button">浏览…</button>
-        </div>
-        <div class="saved-row">
-          <select id="schLibSaved" aria-label="常用原理图库">
-            <option value="">常用 SchLib…</option>
-          </select>
-          <button id="save-schLib" class="link" type="button">保存当前</button>
-          <button id="del-schLib" class="link" type="button">删除</button>
-        </div>
+      <p id="path-status" class="hint" hidden></p>
+      <div class="row">
+        <button id="reset-paths" class="link" type="button">恢复默认路径</button>
       </div>
-
-      <div class="field">
-        <label for="pcbLib">目标封装库 PcbLib</label>
-        <div class="path-row">
-          <input id="pcbLib" type="text" spellcheck="false" placeholder="E:\EDA2Altium\library\MyLib.PcbLib">
-          <button id="browse-pcbLib" class="browse" type="button">浏览…</button>
-        </div>
-        <div class="saved-row">
-          <select id="pcbLibSaved" aria-label="常用封装库">
-            <option value="">常用 PcbLib…</option>
-          </select>
-          <button id="save-pcbLib" class="link" type="button">保存当前</button>
-          <button id="del-pcbLib" class="link" type="button">删除</button>
-        </div>
+      <div class="options">
+        <label class="chk"><input id="keepDocs" type="checkbox"> 保留 SchDoc / PcbDoc</label>
+        <label class="chk"><input id="makePartLibs" type="checkbox"> 生成单件 SchLib / PcbLib</label>
       </div>
+      <p class="hint">选中的文件保存到 <code>&lt;输出目录&gt;\元件名\</code>；其他中间文件自动清理。</p>
+    </section>
 
-      <div class="field">
-        <label for="altiumExe">Altium Designer 程序（X2.EXE）</label>
-        <div class="path-row">
-          <input id="altiumExe" type="text" spellcheck="false" placeholder="E:\AD\AD\X2.EXE">
-          <button id="browse-altiumExe" class="browse" type="button">浏览…</button>
+  </div><!-- /.col-left -->
+
+  <div class="col col-right">
+
+    <div class="right-main">
+
+      <section class="card preview-card">
+        <div class="card-head">
+          <h2>预览</h2>
+          <span id="preview-meta" class="hint mono preview-meta"></span>
         </div>
-        <div class="saved-row">
-          <select id="altiumExeSaved" aria-label="常用 Altium 程序路径">
-            <option value="">常用 Altium 路径…</option>
-          </select>
-          <button id="save-altiumExe" class="link" type="button">保存当前</button>
-          <button id="del-altiumExe" class="link" type="button">删除</button>
+        <div class="preview-body">
+          <p id="preview-empty" class="preview-empty" aria-live="polite">选中搜索结果后，这里显示符号（SchLib）与封装（PcbLib）预览。</p>
+          <div id="preview-panes" class="preview-panes" hidden>
+            <div class="preview-pane">
+              <div class="preview-pane-head">符号 <span class="pv-tag">SchLib</span></div>
+              <div id="preview-symbol" class="preview-canvas"></div>
+            </div>
+            <div class="preview-pane">
+              <div class="preview-pane-head">封装 <span class="pv-tag">PcbLib</span></div>
+              <div id="preview-pcb" class="preview-canvas"></div>
+            </div>
+          </div>
         </div>
-        <p id="altium-status" class="hint" hidden></p>
-      </div>
-    </div>
-    <p id="path-status" class="hint" hidden></p>
-    <div class="row">
-      <button id="reset-paths" class="link" type="button">恢复默认路径</button>
-    </div>
-    <div class="options">
-      <label class="chk"><input id="keepDocs" type="checkbox"> 保留 SchDoc / PcbDoc</label>
-      <label class="chk"><input id="makePartLibs" type="checkbox"> 生成单件 SchLib / PcbLib</label>
-    </div>
-    <p class="hint">选中的文件保存到 <code>&lt;输出目录&gt;\元件名\</code>；其他中间文件自动清理。</p>
-  </section>
+      </section>
 
-  <section class="card">
-    <h2><span class="num">3</span>生成</h2>
-    <div class="row">
-      <button id="build-btn" class="primary" type="button">生成（无浏览器 + Altium 脚本）</button>
-      <span id="job-state" class="badge" hidden></span>
-      <span id="job-id" class="hint mono"></span>
-    </div>
-    <p class="hint">可保持 Altium 打开；有未保存文档请先 Ctrl+S。</p>
-    <div id="job-counts" class="counts" hidden></div>
-    <div id="build-error" class="error" hidden></div>
+      <section class="card progress-card">
+        <div class="card-head">
+          <h2><span class="num">3</span>进度</h2>
+          <div class="progress-meta">
+            <span id="job-state" class="badge" hidden></span>
+            <span id="job-id" class="hint mono"></span>
+          </div>
+          <button id="build-btn" class="primary build-btn" type="button">生成（无浏览器 + Altium 脚本）</button>
+        </div>
+        <p class="hint progress-tip">可保持 Altium 打开；有未保存文档请先 Ctrl+S。</p>
+        <div id="job-counts" class="counts" hidden></div>
+        <div id="build-error" class="error" hidden></div>
 
-    <div id="steps" class="steps" hidden></div>
+        <p id="progress-empty" class="hint progress-empty">尚未开始。先搜索并选中元件，再点右上角「生成」。</p>
+        <div id="steps" class="steps" hidden></div>
 
-    <div class="log-wrap">
+        <div class="art-wrap">
+          <h3>产物</h3>
+          <ul id="artifacts" class="artifacts"><li class="hint">尚无产物</li></ul>
+        </div>
+      </section>
+
+    </div><!-- /.right-main -->
+
+    <section id="log-card" class="card log-card">
       <div class="log-head">
         <h3>实时日志</h3>
         <div class="log-tools">
           <label class="chk"><input id="log-follow" type="checkbox" checked> 自动滚动</label>
           <button id="log-copy" class="link" type="button">复制日志</button>
+          <button id="log-toggle" class="link" type="button" aria-expanded="true" aria-controls="log">隐藏日志</button>
         </div>
       </div>
       <div id="log" class="log"><span class="log-line dim">（尚未开始）</span></div>
-    </div>
+    </section>
 
-    <div class="art-wrap">
-      <h3>产物</h3>
-      <ul id="artifacts" class="artifacts"><li class="hint">尚无产物</li></ul>
-    </div>
-  </section>
+  </div><!-- /.col-right -->
 
 </main>
+
+<!-- 更新提示弹窗：远端推送了新 tag 时自动出现；可选择暂不更新/忽略此版本 -->
+<div id="update-modal" class="modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="update-title">
+    <button id="update-close" class="modal-x" type="button" aria-label="关闭">×</button>
+    <h2 id="update-title">发现新版本</h2>
+    <p id="update-sub" class="modal-sub">远端仓库推送了新 tag。是否更新由你决定，程序不会自动改动代码。</p>
+
+    <div class="ver-compare">
+      <div class="ver-col">
+        <span class="ver-label">当前版本</span>
+        <span id="ver-current" class="ver-tag">—</span>
+        <span id="ver-current-meta" class="ver-meta"></span>
+      </div>
+      <div class="ver-arrow">→</div>
+      <div class="ver-col new">
+        <span class="ver-label">远端最新 tag</span>
+        <span id="ver-latest" class="ver-tag">—</span>
+        <span id="ver-latest-meta" class="ver-meta"></span>
+      </div>
+    </div>
+
+    <div id="update-notes" class="update-notes" hidden></div>
+
+    <div class="modal-actions">
+      <button id="update-later" class="primary" type="button">暂不更新</button>
+      <button id="update-view" type="button">查看更新内容</button>
+      <button id="update-copy" class="link" type="button">复制更新命令</button>
+      <button id="update-ignore" class="link" type="button">忽略此版本</button>
+      <button id="update-restore" class="link" type="button" hidden>恢复提醒</button>
+    </div>
+    <p id="update-hint" class="hint">「暂不更新」只在本次运行隐藏提示，下次启动仍会提醒；更新后需停止并重新启动本服务（常用路径与作业记录保存在 state 目录，不受影响）。</p>
+  </div>
+</div>
 
 <script src="/app.js"></script>
 </body>

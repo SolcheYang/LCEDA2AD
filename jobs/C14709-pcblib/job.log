@@ -1,0 +1,13 @@
+STEP pcblib
+OK pcblib server
+OK pcblib document
+OK pcblib library assigned
+OK pcblib component registered
+OK regions begin solid=5 outline=0 skipped=0
+OK regions added
+OK pcblib primitives added
+OK pcblib ComponentCount
+OK pcblib merged L0603 into the existing target library
+COUNT schlib comps=0 pins=2 libref=BLM18PG121SN1D src=self-recorded+file-scan
+COUNT pcblib comps=26 before=25 pads=2 regions=5 skippedregions=0 name=L0603 src=model+file-check
+DONE artifacts=1

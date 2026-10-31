@@ -123,6 +123,9 @@ HTTP（仅 localhost，端口 43180，可用 PORT 覆盖）：
 - `GET /` → `app/public/index.html`
 - `GET /api/health` → `{ ok:true, app:"lceda2altium", version, pid, port, root, startedAt, busy }`（启动器用于复用实例与停止服务）
 - `GET /api/search?q=...` → `{ ok:true, candidates:[...] }`
+- `GET /api/preview?lcsc=C25804` → `{ ok:true, lcsc, mpn, package, value, description, pinCount, padCount, symbolSvg, footprintSvg }`
+  （把 ComponentModel 的符号/封装几何渲染成内联 SVG 供页面预览；只读、不落盘，结果缓存 10 分钟。
+  参数必须是 C 编号；按名称搜索请先走 `/api/search`。）
 - `POST /api/build` body `{ query, outDir, schLib, pcbLib }` → `{ ok:true, jobId }`（异步执行）
 - `POST /api/pick-path` body `{ mode:"folder"|"schlib"|"pcblib", current? }` → `{ ok:true, path }`
   （由本机弹出 Windows 原生选择框；取消时返回空 path。浏览器无法直接取得绝对路径。）
@@ -130,5 +133,11 @@ HTTP（仅 localhost，端口 43180，可用 PORT 覆盖）：
 - `POST /api/prefs` body `{ prefs:{ paths?, lists?, options? } }` → `{ ok:true, prefs }`
   （常用路径与上次使用的路径写入启动器 state 目录的 `ui-prefs.json`，关闭程序后仍保留。）
 - `GET /api/job?id=...` → `{ ok:true, state:"running|done|error", steps:[...], artifacts:[...], log:"<tail>" }`
+- `GET /api/update` → 更新检查缓存结果
+  `{ ok, supported, checking, hasUpdate, current:{ tag, commit, date, subject }, latest:{ tag, commit, subject, message, url, compareUrl }, dismissed }`
+  （`git ls-remote --tags origin` 只读比对远端 tag 与当前 tag；结果缓存 10 分钟，过期后在后台刷新。）
+- `POST /api/update/check` → 强制重新检查（等待完成，可能耗时数秒到 20 秒）
+- `POST /api/update/dismiss` body `{ tag, clear? }` → 忽略某个 tag 的更新提示；
+  `clear:true` 恢复提醒。写入 state 目录的 `update-state.json`。
 
 默认值（UI 与服务端一致）：`outDir = E:\EDA2Altium\out`，`schLib = E:\EDA2Altium\library\MyLib.SchLib`，`pcbLib = E:\EDA2Altium\library\MyLib.PcbLib`。
