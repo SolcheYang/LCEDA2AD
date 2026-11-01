@@ -28,6 +28,10 @@ const el = {
   pathStatus: $('path-status'),
   keepDocs: $('keepDocs'), makePartLibs: $('makePartLibs'),
   buildBtn: $('build-btn'), jobState: $('job-state'), jobId: $('job-id'), buildError: $('build-error'),
+  jobRefresh: $('job-refresh'), jobReset: $('job-reset'), jobHint: $('job-hint'),
+  dupModal: $('dup-modal'), dupClose: $('dup-close'), dupList: $('dup-list'),
+  dupSub: $('dup-sub'), dupHint: $('dup-hint'),
+  dupOverwrite: $('dup-overwrite'), dupAbort: $('dup-abort'),
   resetPaths: $('reset-paths'), jobCounts: $('job-counts'),
   steps: $('steps'), log: $('log'), logCopy: $('log-copy'), logFollow: $('log-follow'),
   logCard: $('log-card'), logToggle: $('log-toggle'), progressEmpty: $('progress-empty'),
@@ -45,11 +49,18 @@ const el = {
   updateIgnore: $('update-ignore'), updateRestore: $('update-restore'), updateHint: $('update-hint'),
 };
 
+const LCSC_RE = /^c\d+$/i;
+const BUILD_BTN_TEXT = '生成（无浏览器 + Altium 脚本）';
+
 let selected = null;
 let pollTimer = null;
 let currentJobId = null;
+let currentJobState = null; // 'running' | 'done' | 'error' | null
 let lastLogText = '';
 let lastLogLineCount = 0;
+// 重复提示弹窗打开期间的 resolve；chooseDuplicate() 用它把按钮选择变成 Promise。
+let dupChoice = null;
+let dupLastFocus = null;
 
 function setPaths(paths) {
   el.outDir.value = paths.outDir || DEFAULTS.outDir;
@@ -490,6 +501,123 @@ async function loadPreview(lcsc) {
 }
 
 /* ─────────────── 生成 / 轮询 ─────────────── */
+function restoreBuildButton() {
+  el.buildBtn.disabled = false;
+  el.buildBtn.textContent = BUILD_BTN_TEXT;
+}
+
+function setJobHint(message) {
+  if (!el.jobHint) return;
+  el.jobHint.hidden = !message;
+  el.jobHint.textContent = message || '';
+}
+
+/** 清空进度面板；运行中的作业由调用方先 /api/job/cancel。 */
+function clearJobUI({ logText = '' } = {}) {
+  stopPolling();
+  currentJobId = null;
+  currentJobState = null;
+  el.jobState.hidden = true;
+  el.jobId.textContent = '';
+  el.jobCounts.hidden = true;
+  el.steps.innerHTML = '';
+  el.steps.hidden = true;
+  if (el.progressEmpty) el.progressEmpty.hidden = false;
+  el.artifacts.innerHTML = '<li class="hint">尚无产物</li>';
+  showError(el.buildError, '');
+  setLogText(logText);
+  restoreBuildButton();
+}
+
+async function checkDuplicate(query) {
+  const res = await fetch('/api/check-duplicate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({
+      query,
+      outDir: el.outDir.value.trim(),
+      schLib: el.schLib.value.trim(),
+      pcbLib: el.pcbLib.value.trim(),
+      fields: currentFields(),
+    }),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || '重复检查失败');
+  return data;
+}
+
+function renderDuplicateList(report) {
+  el.dupList.innerHTML = '';
+  const item = (title, info) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'dup-item';
+    const h = document.createElement('h3');
+    h.textContent = title;
+    const file = document.createElement('div');
+    file.className = 'dup-path';
+    file.textContent = info.file;
+    const name = document.createElement('div');
+    name.className = 'dup-path';
+    name.textContent = '元件：' + (info.name || '—');
+    wrap.append(h, file, name);
+    if (info.reason) {
+      const warn = document.createElement('div');
+      warn.className = 'dup-warn';
+      warn.textContent = info.reason;
+      wrap.appendChild(warn);
+    } else {
+      const ok = document.createElement('div');
+      ok.className = 'dup-ok';
+      ok.textContent = title.indexOf('PcbLib') >= 0
+        ? '将删除旧封装并重画。'
+        : '将备份该库并重建（仅当库里只有这个元件时安全）。';
+      wrap.appendChild(ok);
+    }
+    return wrap;
+  };
+  if (report.schlib && report.schlib.duplicate) el.dupList.appendChild(item('SchLib 原理图库', report.schlib));
+  if (report.pcblib && report.pcblib.duplicate) el.dupList.appendChild(item('PcbLib 封装库', report.pcblib));
+
+  const blocked = (report.schlib && report.schlib.canOverwrite === false)
+    || (report.pcblib && report.pcblib.canOverwrite === false);
+  el.dupOverwrite.disabled = blocked;
+  el.dupOverwrite.title = blocked ? '目标 SchLib 不能安全覆盖，见下方说明' : '';
+  el.dupHint.className = blocked ? 'error' : 'hint';
+  el.dupHint.textContent = blocked
+    ? '「覆盖」不可用：目标 SchLib 里还有其它元件，Altium 脚本无法只删除一个。请先在 Altium 里手动删除该元件，或换一个 SchLib。'
+    : '「覆盖」会重画目标库中的同名元件；「终止」不会写入任何文件。';
+}
+
+function closeDuplicateModal() {
+  if (!el.dupModal || el.dupModal.hidden) return;
+  el.dupModal.hidden = true;
+  document.body.classList.remove('modal-open');
+  if (dupLastFocus && typeof dupLastFocus.focus === 'function') {
+    try { dupLastFocus.focus(); } catch { /* 元素已移除 */ }
+  }
+  dupLastFocus = null;
+}
+
+function answerDuplicate(choice) {
+  const resolve = dupChoice;
+  dupChoice = null;
+  closeDuplicateModal();
+  if (resolve) resolve(choice);
+}
+
+/** 显示重复确认框，resolve 为 'overwrite' 或 'abort'。 */
+function chooseDuplicate(report) {
+  return new Promise((resolve) => {
+    if (dupChoice) { const previous = dupChoice; dupChoice = null; previous('abort'); }
+    dupChoice = resolve;
+    renderDuplicateList(report);
+    el.dupModal.hidden = false;
+    document.body.classList.add('modal-open');
+    dupLastFocus = document.activeElement;
+    (el.dupOverwrite.disabled ? el.dupAbort : el.dupOverwrite).focus();
+  });
+}
+
 async function doBuild() {
   const query = (selected && selected.lcsc) ? selected.lcsc : el.q.value.trim();
   if (!query) {
@@ -497,7 +625,28 @@ async function doBuild() {
     return;
   }
   showError(el.buildError, '');
+  setJobHint('');
   el.buildBtn.disabled = true;
+  el.buildBtn.textContent = '检查目标库…';
+
+  // 先查目标库是否已有同名元件；有则让用户选择覆盖 / 终止。
+  // 检查本身失败（网络/数据层）不阻断生成：管线仍会按幂等规则处理。
+  let overwrite = false;
+  try {
+    const check = await checkDuplicate(query);
+    if (check && check.hasDuplicate) {
+      const choice = await chooseDuplicate(check);
+      if (choice !== 'overwrite') {
+        restoreBuildButton();
+        setJobHint('已终止：目标库中已有该元件，未写入任何文件。');
+        return;
+      }
+      overwrite = true;
+    }
+  } catch (err) {
+    setJobHint('重复检查未完成：' + (err && err.message ? err.message : err) + '；将按普通流程继续。');
+  }
+
   el.buildBtn.textContent = '派发中…';
   el.jobId.textContent = '';
   el.jobState.hidden = true;
@@ -506,6 +655,7 @@ async function doBuild() {
   el.jobCounts.hidden = true;
   el.artifacts.innerHTML = '<li class="hint">尚无产物</li>';
   setLogText('（等待后端启动作业…）');
+  currentJobState = null;
   try {
     const res = await fetch('/api/build', {
       method: 'POST',
@@ -519,16 +669,17 @@ async function doBuild() {
         makePartLibs: !!(el.makePartLibs && el.makePartLibs.checked),
         // 预览里改过的 Description / Designator / Comment / Design Item ID
         fields: currentFields(),
+        overwrite,
       }),
     });
     const data = await res.json();
     if (!data.ok) {
       showError(el.buildError, data.error || '派发失败');
-      el.buildBtn.disabled = false;
-      el.buildBtn.textContent = '生成（无浏览器 + Altium 脚本）';
+      restoreBuildButton();
       return;
     }
     currentJobId = data.jobId;
+    currentJobState = 'running';
     el.jobId.textContent = 'jobId: ' + data.jobId;
     if (data.paths) setPaths(data.paths);
     capturePrefsFromUi();
@@ -537,8 +688,86 @@ async function doBuild() {
     poll();
   } catch (err) {
     showError(el.buildError, '请求后端失败：' + (err && err.message ? err.message : err) + '（服务是否还在运行？）');
-    el.buildBtn.disabled = false;
-    el.buildBtn.textContent = '生成（无浏览器 + Altium 脚本）';
+    restoreBuildButton();
+  }
+}
+
+/** 刷新：重新获取作业状态；job id 失效时从 /api/health 接回运行中的作业。 */
+async function refreshJob() {
+  if (el.jobRefresh) el.jobRefresh.disabled = true;
+  setJobHint('');
+  try {
+    if (currentJobId) {
+      const res = await fetch('/api/job?id=' + encodeURIComponent(currentJobId), { cache: 'no-store' });
+      const data = await res.json();
+      if (data.ok) {
+        renderJob(data);
+        if (data.state === 'running') {
+          el.buildBtn.disabled = true;
+          el.buildBtn.textContent = '生成中…';
+          stopPolling();
+          pollTimer = setTimeout(poll, POLL_MS);
+          setJobHint('已刷新：作业仍在运行。');
+        } else {
+          finishBuild();
+          setJobHint('已刷新：作业' + (data.state === 'done' ? '已完成。' : '已失败。'));
+        }
+        return;
+      }
+    }
+    const healthRes = await fetch('/api/health', { cache: 'no-store' });
+    const health = await healthRes.json();
+    if (health && health.ok && health.activeJobId) {
+      currentJobId = health.activeJobId;
+      currentJobState = 'running';
+      el.jobId.textContent = 'jobId: ' + currentJobId;
+      el.buildBtn.disabled = true;
+      el.buildBtn.textContent = '生成中…';
+      stopPolling();
+      poll();
+      setJobHint('已接回运行中的作业。');
+      return;
+    }
+    if (currentJobId || currentJobState === 'running') {
+      clearJobUI();
+      setJobHint('服务端没有运行中的作业（服务可能已重启），界面已重置。');
+    } else {
+      setJobHint('没有运行中的作业，界面已是最新。');
+    }
+  } catch (err) {
+    setJobHint('刷新失败：' + (err && err.message ? err.message : err) + '（服务是否还在运行？）');
+  } finally {
+    if (el.jobRefresh) el.jobRefresh.disabled = false;
+  }
+}
+
+/** 重置：运行中先终止管线，再清空进度面板。 */
+async function resetJob() {
+  const jobId = currentJobId;
+  const running = currentJobState === 'running';
+  if (running && !window.confirm('当前作业仍在运行。重置会先终止它，确定继续？')) return;
+  if (el.jobReset) { el.jobReset.disabled = true; el.jobReset.textContent = '终止中…'; }
+  el.buildBtn.disabled = true;
+  if (jobId) setJobHint('正在终止当前作业并清理界面…');
+  let notice = '界面已重置。';
+  try {
+    if (jobId) {
+      const res = await fetch('/api/job/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ id: jobId }),
+      });
+      const data = await res.json();
+      if (data && data.cancelled) notice = '已终止当前作业并重置界面。';
+      else if (data && data.ok) notice = '作业已结束，界面已重置。';
+      else notice = '终止请求失败：' + ((data && data.error) || '未知错误') + '；界面已重置，如仍卡住请重启服务。';
+    }
+  } catch (err) {
+    notice = '终止请求失败：' + (err && err.message ? err.message : err) + '；界面已重置，如仍卡住请重启服务。';
+  } finally {
+    clearJobUI();
+    if (el.jobReset) { el.jobReset.disabled = false; el.jobReset.textContent = '重置'; }
+    setJobHint(notice);
   }
 }
 
@@ -554,7 +783,9 @@ async function poll() {
     const data = await res.json();
     if (!data.ok) {
       showError(el.buildError, data.error || '查询作业状态失败');
+      currentJobState = null;
       finishBuild();
+      setJobHint('作业记录已失效（服务可能重启）。可点「刷新」重新接回，或「重置」清空界面。');
       return;
     }
     renderJob(data);
@@ -572,13 +803,13 @@ async function poll() {
 
 function finishBuild() {
   stopPolling();
-  el.buildBtn.disabled = false;
-  el.buildBtn.textContent = '生成（无浏览器 + Altium 脚本）';
+  restoreBuildButton();
   // 生成期间如果有更新提示被推迟，作业结束后再弹（不遮挡正在看的日志）。
   maybeShowUpdateModal();
 }
 
 function renderJob(job) {
+  currentJobState = job.state || null;
   el.jobState.hidden = false;
   el.jobState.className = 'badge ' + job.state;
   const secs = Math.round((job.elapsedMs || 0) / 1000);
@@ -964,7 +1195,13 @@ if (el.updateModal) {
   });
 }
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && el.updateModal && !el.updateModal.hidden) {
+  if (e.key !== 'Escape') return;
+  if (el.dupModal && !el.dupModal.hidden) {
+    e.preventDefault();
+    answerDuplicate('abort');
+    return;
+  }
+  if (el.updateModal && !el.updateModal.hidden) {
     e.preventDefault();
     closeUpdateModal({ remember: true });
   }
@@ -974,6 +1211,16 @@ document.addEventListener('keydown', (e) => {
 el.searchBtn.addEventListener('click', doSearch);
 el.q.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 el.buildBtn.addEventListener('click', doBuild);
+if (el.jobRefresh) el.jobRefresh.addEventListener('click', refreshJob);
+if (el.jobReset) el.jobReset.addEventListener('click', resetJob);
+if (el.dupOverwrite) el.dupOverwrite.addEventListener('click', () => answerDuplicate('overwrite'));
+if (el.dupAbort) el.dupAbort.addEventListener('click', () => answerDuplicate('abort'));
+if (el.dupClose) el.dupClose.addEventListener('click', () => answerDuplicate('abort'));
+if (el.dupModal) {
+  el.dupModal.addEventListener('click', (e) => {
+    if (e.target === el.dupModal) answerDuplicate('abort');
+  });
+}
 if (el.fieldsReset) {
   el.fieldsReset.addEventListener('click', () => {
     if (previewFieldDefaults) fillFields(previewFieldDefaults);
@@ -1065,6 +1312,16 @@ for (const field of PATH_FIELDS) renderSavedPaths(field);
     if (data && data.ok && data.defaults) {
       DEFAULTS = { ...DEFAULTS, ...data.defaults };
       setPathsIfUntouched(DEFAULTS);
+    }
+    // 页面刷新/重新打开时，服务端可能还有作业在跑：直接接回进度并继续轮询。
+    if (data && data.ok && data.activeJob) {
+      currentJobId = data.activeJob.id;
+      currentJobState = 'running';
+      el.jobId.textContent = 'jobId: ' + currentJobId;
+      el.buildBtn.disabled = true;
+      el.buildBtn.textContent = '生成中…';
+      setJobHint('检测到运行中的作业，正在接回进度…');
+      poll();
     }
   } catch { /* file:// static preview or server not ready */ }
   try {

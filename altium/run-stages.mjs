@@ -22,8 +22,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import iconv from 'iconv-lite';
 import { runAltiumJob } from '../app/lib/run-altium.mjs';
+import { BLANK_SCH_COMPONENT, bufferHasText, namesPresent, schLibComponentNames } from '../app/lib/library-scan.mjs';
 import { emitScriptJob, LIB_MARKER_SCH, LIB_MARKER_PCB } from '../app/lib/emit-script-lib.mjs';
 import { FIELD_KEYS, schlibFields, sanitizeFieldOverrides, withFieldOverrides } from '../app/lib/component-fields.mjs';
 import { countDocumentRecords } from '../app/lib/emit-altium.mjs';
@@ -35,6 +35,16 @@ const EXE = process.env.ALTIUM_EXE || 'E:\\AD\\AD\\X2.EXE';
 const LCSC = process.argv[2] || 'C92116';
 const KEEP_DOCS = process.env.KEEP_DOCS === '1';
 const MAKE_PART_LIBS = process.env.MAKE_PART_LIBS === '1';
+// Set by the HTTP layer after the user chose "覆盖" in the duplicate dialog.
+// It forces an existing SchLib/PcbLib component to be replaced instead of the
+// normal idempotent skip.
+const OVERWRITE = process.env.OVERWRITE === '1';
+// UI「重置」写入这个哨兵文件；管线在阶段之间/Altium 轮询里看到它就自行收尾。
+const CANCEL_FILE = String(process.env.CANCEL_FILE || '').trim();
+const cancelRequested = () => {
+  if (!CANCEL_FILE) return false;
+  try { return fs.existsSync(CANCEL_FILE); } catch { return false; }
+};
 const TARGET_STAGES = ['pcblib', 'schlib'];
 const PART_STAGES = MAKE_PART_LIBS ? ['pcblib_part', 'schlib_part'] : [];
 const STAGES = [...TARGET_STAGES, ...PART_STAGES];
@@ -112,49 +122,6 @@ function readRegistry() {
 function writeRegistry(reg) {
   try { fs.mkdirSync(path.dirname(REGISTRY), { recursive: true }); fs.writeFileSync(REGISTRY, JSON.stringify(reg, null, 2)); } catch { /* best effort */ }
 }
-/** Byte scan for a component name; SchLib/PcbLib may store ANSI, GBK or UTF-16. */
-function bufferHasText(buf, text) {
-  const value = String(text == null ? '' : text);
-  if (!value) return false;
-  const needles = [Buffer.from(value, 'latin1'), Buffer.from(value, 'utf16le')];
-  try { needles.push(iconv.encode(value, 'gbk')); } catch { /* not GBK-encodable: ignore */ }
-  return needles.some((needle) => needle.length > 0 && buf.includes(needle));
-}
-function namesPresent(file, candidates) {
-  if (!fs.existsSync(file)) return [];
-  const buf = fs.readFileSync(file);
-  return candidates.filter((n) => n && bufferHasText(buf, n));
-}
-
-/**
- * Every component name stored in a SchLib, read from the ASCII header
- * (`CompCount=n|LibRef0=...`). The scripting API cannot enumerate SchLib
- * components, so this header scan is the only complete list; it is what keeps
- * the "sole-component rebuild" from deleting a component the registry forgot.
- */
-function schLibComponentNames(file) {
-  if (!fs.existsSync(file)) return [];
-  try {
-    const text = fs.readFileSync(file).toString('latin1');
-    const names = [];
-    // Non-ASCII names are stored as %UTF8%LibRefN=..., everything else as LibRefN=.
-    const re = /(^|\||%)(LibRef\d+=)([^|]*)/g;
-    let match;
-    while ((match = re.exec(text)) !== null) {
-      let name = match[3];
-      if (match[1] === '%') {
-        try { name = Buffer.from(name, 'latin1').toString('utf8'); } catch { /* keep raw */ }
-      }
-      name = name.trim();
-      if (name) names.push(name);
-    }
-    return Array.from(new Set(names));
-  } catch {
-    return [];
-  }
-}
-// Altium's blank placeholder in a fresh SchLib; it carries no geometry.
-const BLANK_SCH_COMPONENT = /^Component_\d+$/i;
 
 /** Folder name from the component name; strips Windows-invalid characters. */
 function safeFolderName(value) {
@@ -268,7 +235,9 @@ async function runAltiumStage(stage, model, outDirOverride, options = {}) {
     pcbLibCurrent: options.pcbLibCurrent === true,
   });
   const startupMs = Number(process.env.ALTIUM_STARTUP_MS || 180000);
-  const res = await runAltiumJob(job, { timeoutMs: startupMs + 60000, startupMs, stallMs: 60000 });
+  const res = await runAltiumJob(job, {
+    timeoutMs: startupMs + 60000, startupMs, stallMs: 60000, cancelFile: CANCEL_FILE,
+  });
   const lastOk = String(res.log).split(/\r?\n/).filter((l) => l.startsWith('OK')).pop() || '(none)';
   log('STAGE ' + stage + ' ok=' + res.ok + ' elapsed=' + res.elapsedMs + 'ms');
   log('  last OK: ' + lastOk);
@@ -348,6 +317,7 @@ async function main() {
   const keepIntermediateDir = KEEP_DOCS || MAKE_PART_LIBS;
   if (keepIntermediateDir) fs.mkdirSync(componentDir, { recursive: true });
   log('options: KEEP_DOCS=' + KEEP_DOCS + ' MAKE_PART_LIBS=' + MAKE_PART_LIBS
+    + ' OVERWRITE=' + (OVERWRITE ? '1' : '0')
     + ' componentDir=' + (keepIntermediateDir ? componentDir : '(none)'));
   for (const dir of [OUT_DIR, path.dirname(LIB_SCH), path.dirname(LIB_PCB)]) fs.mkdirSync(dir, { recursive: true });
 
@@ -477,12 +447,14 @@ async function main() {
   // stale geometry (safe only when that library holds this single component).
   const schFieldStale = fieldChanges.length > 0
     && (namesPresent(LIB_SCH, schNameCandidates).length > 0 || namesPresent(LIB_SCH, [LCSC]).length > 0);
-  const schCurrent = versions[LIB_SCH] === LIB_MARKER_SCH && fs.existsSync(LIB_SCH)
+  const schCurrent = !OVERWRITE && versions[LIB_SCH] === LIB_MARKER_SCH && fs.existsSync(LIB_SCH)
     && namesPresent(LIB_SCH, [libName]).length > 0 && !schFieldStale;
-  const pcbCurrent = versions[LIB_PCB] === LIB_MARKER_PCB && fs.existsSync(LIB_PCB)
+  const pcbCurrent = !OVERWRITE && versions[LIB_PCB] === LIB_MARKER_PCB && fs.existsSync(LIB_PCB)
     && !!pkg && namesPresent(LIB_PCB, [pkg]).length > 0;
-  log('LIB VERSION schlib=' + (versions[LIB_SCH] || '(none)') + ' current=' + schCurrent);
-  log('LIB VERSION pcblib=' + (versions[LIB_PCB] || '(none)') + ' current=' + pcbCurrent);
+  log('LIB VERSION schlib=' + (versions[LIB_SCH] || '(none)') + ' current=' + schCurrent
+    + (OVERWRITE ? ' overwrite=1' : ''));
+  log('LIB VERSION pcblib=' + (versions[LIB_PCB] || '(none)') + ' current=' + pcbCurrent
+    + (OVERWRITE ? ' overwrite=1' : ''));
   const schNames = Array.from(new Set([...(registry[LIB_SCH] || []), ...schNameCandidates, LCSC]));
   const pcbNames = Array.from(new Set([...(registry[LIB_PCB] || []), pkg]));
   const sizeOf = (p) => (fs.existsSync(p) ? fs.statSync(p).size : 0);
@@ -499,9 +471,11 @@ async function main() {
   // no NPTH holes, no silk arcs). Unlike SchLib, the PcbLib API can remove a single
   // component, so rewrite just that component instead of silently keeping the old
   // drawing. Without this the version marker would report "stale" but never refresh.
-  const forceStalePcb = !pcbCurrent && !!pkg && before.pcb.names.includes(pkg);
+  const forceStalePcb = (OVERWRITE || !pcbCurrent) && !!pkg && before.pcb.names.includes(pkg);
   if (forceStalePcb) {
-    log('PCB STALE: ' + pkg + ' predates ' + LIB_MARKER_PCB + '; it will be removed and redrawn');
+    log(OVERWRITE
+      ? 'PCB OVERWRITE: ' + pkg + ' exists in the target library; it will be removed and redrawn (UI choice)'
+      : 'PCB STALE: ' + pkg + ' predates ' + LIB_MARKER_PCB + '; it will be removed and redrawn');
   }
 
   // The SchLib API has no usable RemoveComponent. If the target already contains
@@ -513,6 +487,9 @@ async function main() {
     const schHasOld = namesPresent(LIB_SCH, Array.from(new Set([LCSC, previousName]))).length > 0;
     const schHasNew = namesPresent(LIB_SCH, [libName]).length > 0;
     if ((schHasOld || schHasNew) && !schCurrent) {
+      log(OVERWRITE
+        ? 'SCHLIB OVERWRITE: ' + libName + ' exists in the target library; the file will be replaced (UI choice)'
+        : 'SCHLIB repair: ' + libName + ' is stale or its fields changed; the file will be replaced');
       // Prefer the complete header list; the registry may have missed components
       // added to this library from Altium, and a rebuild rewrites the whole file.
       const inventory = schLibComps.length ? schLibComps : before.sch.names;
@@ -546,6 +523,7 @@ async function main() {
   let failedStage = null;
   for (const stage of STAGES) {
     if (failedStage) break;
+    if (cancelRequested()) fail('cancelled from the UI', 4);
     if (stage === 'schlib' && skipSchMerge) {
       log('SKIP schlib: target SchLib cannot be replaced safely (see PROBLEM below)');
       continue;
@@ -739,7 +717,11 @@ async function main() {
     forceRm(path.join(dir, '__Previews'));
     try {
       for (const e of fs.readdirSync(dir)) {
-        if (e.startsWith(base + '.bak-')) forceRm(path.join(dir, e));
+        if (!e.startsWith(base + '.bak-')) continue;
+        // An explicit UI "覆盖" keeps its backup so the user can roll back the
+        // replaced library; stale-version rebuilds keep the old auto-cleanup.
+        if (OVERWRITE) { log('OVERWRITE: kept backup ' + path.join(dir, e)); continue; }
+        forceRm(path.join(dir, e));
       }
     } catch { /* dir absent */ }
   }

@@ -173,6 +173,8 @@ h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 14px 0 6px;
 .card-head h2 { margin: 0; }
 .progress-meta { flex: 1 1 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .progress-meta .hint { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-tools { display: flex; align-items: center; gap: 10px; flex: none; }
+.job-tools button { padding: 4px 2px; }
 .build-btn { flex: none; margin-left: auto; white-space: nowrap; }
 .progress-card .progress-tip { margin: -4px 0 10px; }
 
@@ -399,6 +401,17 @@ button.browse { flex: none; padding: 8px 12px; font-size: 13px; white-space: now
   overflow-wrap: anywhere;
 }
 .update-notes[hidden] { display: none; }
+.dup-list { display: flex; flex-direction: column; gap: 10px; }
+.dup-item {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.dup-item h3 { margin: 0 0 4px; font-size: 13px; }
+.dup-item .dup-path { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.dup-item .dup-ok { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.dup-item .dup-warn { margin-top: 6px; color: #b91c1c; font-size: 12.5px; line-height: 1.5; }
 .modal-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
 .modal-actions button { white-space: nowrap; }
 .modal-actions button.link { padding: 6px 4px; }

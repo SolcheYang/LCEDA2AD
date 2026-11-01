@@ -236,9 +236,18 @@ export async function runAltiumJob(job, options = {}) {
   let lastLog = null;
   let lastChange = started;
   let timedOut = false;
+  let cancelled = false;
   let done = false;
 
+  // UI「重置」通过一个哨兵文件请求取消：脚本自己的轮询会先杀它启动的
+  // Altium，再退出，避免只杀管线留下一个卡在弹窗里的 Altium。
+  const shouldCancel = () => {
+    if (!options.cancelFile) return false;
+    try { return fs.existsSync(options.cancelFile); } catch { return false; }
+  };
+
   for (;;) {
+    if (shouldCancel()) { cancelled = true; break; }
     await sleep(POLL_MS);
     try { log = fs.readFileSync(job.logPath, 'latin1'); } catch { log = ''; }
     if (log !== lastLog) { lastLog = log; lastChange = Date.now(); }
@@ -276,6 +285,13 @@ export async function runAltiumJob(job, options = {}) {
     elapsedMs: Date.now() - started,
     tail: tailOf(log, 20),
   };
+
+  if (cancelled) {
+    result.cancelled = true;
+    result.error = 'Altium job cancelled from the UI'
+      + (killed.length ? ' (killed started PIDs: ' + killed.join(',') + ')' : ' (no Altium process was started by this job)');
+    return result;
+  }
 
   // A wedged run is almost always Altium showing a modal "Error" box for a script
   // exception. Capture it so the failure is evidence, not a silent hang.

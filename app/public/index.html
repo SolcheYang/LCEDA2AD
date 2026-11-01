@@ -165,11 +165,18 @@
             <span id="job-state" class="badge" hidden></span>
             <span id="job-id" class="hint mono"></span>
           </div>
+          <div class="job-tools">
+            <button id="job-refresh" class="link" type="button"
+                    title="重新获取作业状态；页面刷新后会自动接回运行中的作业">刷新</button>
+            <button id="job-reset" class="link" type="button"
+                    title="清空进度；作业仍在运行时会先终止它">重置</button>
+          </div>
           <button id="build-btn" class="primary build-btn" type="button">生成（无浏览器 + Altium 脚本）</button>
         </div>
         <p class="hint progress-tip">可保持 Altium 打开；有未保存文档请先 Ctrl+S。</p>
         <div id="job-counts" class="counts" hidden></div>
         <div id="build-error" class="error" hidden></div>
+        <p id="job-hint" class="hint" hidden></p>
 
         <p id="progress-empty" class="hint progress-empty">尚未开始。先搜索并选中元件，再点右上角「生成」。</p>
         <div id="steps" class="steps" hidden></div>
@@ -197,6 +204,21 @@
   </div><!-- /.col-right -->
 
 </main>
+
+<!-- 重复提示弹窗：目标库中已存在同名元件时，由用户选择覆盖或终止 -->
+<div id="dup-modal" class="modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="dup-title">
+    <button id="dup-close" class="modal-x" type="button" aria-label="关闭">×</button>
+    <h2 id="dup-title">目标库中已存在该元件</h2>
+    <p id="dup-sub" class="modal-sub">生成前检查到目标库中已有同名元件。选择「覆盖」会先删除/重建它；选择「终止」不会写入任何文件。</p>
+    <div id="dup-list" class="dup-list"></div>
+    <div class="modal-actions">
+      <button id="dup-overwrite" class="primary" type="button">覆盖</button>
+      <button id="dup-abort" type="button">终止</button>
+    </div>
+    <p id="dup-hint" class="hint"></p>
+  </div>
+</div>
 
 <!-- 更新提示弹窗：远端推送了新 tag 时自动出现；可选择暂不更新/忽略此版本 -->
 <div id="update-modal" class="modal" hidden>

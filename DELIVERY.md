@@ -20,6 +20,8 @@
 | 得到 SchDoc/PcbDoc（临时） | 由 EasyEDA 数据接口取几何，`altium-doc-writer.mjs` 写出临时 Altium ASCII 5.0 文档用于解析 | 生成后回读：SchDoc 1 元件/30 引脚/1 矩形/1 椭圆；PcbDoc 1 元件/30 焊盘/4 丝印线/2 圆弧；成功后文档删除 |
 | AD Make Schematic Library / Make PCB Library | 改为**脚本 API 等价转换**：在 Altium 内创建库组件，不调用菜单、不点击 | 生成的 job.pas 通过静态校验；几何与数据层 30/30 一致 |
 | 并入指定 SchLib/PcbLib | 目标库不存在则新建；同名幂等跳过；追加后校验名称 | 已真机复验：新库创建、追加、幂等、旧空库自动修复均 PASS |
+| 目标库已有同名元件 | 生成前调用 `/api/check-duplicate`，页面弹窗让用户选择「覆盖」或「终止」；覆盖以 `OVERWRITE=1` 强制重画，SchLib 含其它元件时禁用覆盖并说明原因 | `app/lib/library-scan.mjs` 扫描 SchLib 头部/封装名；C25804 对 MyLib 实测命中 SchLib `0603WAF1002T5E` 与 PcbLib `R0603`，多组件库 `canOverwrite:false` |
+| 失败/卡住后恢复 | 进度卡片新增「刷新」（重读作业，页面刷新后按 `/api/health.activeJobId` 接回）与「重置」（先 `/api/job/cancel` 终止管线再清空面板） | `POST /api/job/cancel` + health `activeJobId`；面板状态与日志一并复位 |
 | SchLib Description / Value | Description 取 EasyEDA `result.description`；Value 取 `c_para.Value`，有值则新建可见 `Value` 参数 | C25804：`10KΩ (1002) ±1%` / `10kΩ`（可见）；C92116 接口返回空描述/无 Value |
 | SchLib 立创编号参数 | 生成的 SchLib 组件固定带一个隐藏 `立创编号` 参数，值 = 输入的 LCSC 编号（v15 起） | 生成的 `job.pas` 含 `AddParameter(Target, '立创编号', 'C25804', True, ...)`；GBK 编码与 `validatePas` 校验通过 |
 | SchLib 四字段预览与修改 | 预览页显示并可编辑 Description / Designator / Comment / Design Item ID（`/api/preview` 返回 `fields`，`/api/build` 接收 `fields`，管线以 `COMPONENT_FIELDS` 传入）；SchDoc 与 SchLib 共用同一套默认值 | `app/lib/component-fields.mjs`；`schlibFields()` 在预览、文档与库发射器中共用 |

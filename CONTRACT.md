@@ -132,17 +132,24 @@ export async function runAltiumJob(job, { timeoutMs = 180000 } = {})
 ## 4. C 应用层 — `app/server.mjs`
 HTTP（仅 localhost，端口 43180，可用 PORT 覆盖）：
 - `GET /` → `app/public/index.html`
-- `GET /api/health` → `{ ok:true, app:"lceda2altium", version, pid, port, root, startedAt, busy }`（启动器用于复用实例与停止服务）
+- `GET /api/health` → `{ ok:true, app:"lceda2altium", version, pid, port, root, startedAt, busy, activeJobId, activeJob }`（启动器用于复用实例与停止服务；页面刷新后用 `activeJobId` 接回运行中的作业）
 - `GET /api/search?q=...` → `{ ok:true, candidates:[...] }`
 - `GET /api/preview?lcsc=C25804` → `{ ok:true, lcsc, mpn, package, value, description, fields, pinCount, padCount, symbolSvg, footprintSvg }`
   （把 ComponentModel 的符号/封装几何渲染成内联 SVG 供页面预览；只读、不落盘，结果缓存 10 分钟。
   `fields = { description, designator, comment, designItemId }` 是生成 SchLib 时会写入的四个属性的默认值。
   参数必须是 C 编号；按名称搜索请先走 `/api/search`。）
-- `POST /api/build` body `{ query, outDir, schLib, pcbLib, keepDocs?, makePartLibs?, fields? }` → `{ ok:true, jobId }`（异步执行）
+- `POST /api/check-duplicate` body `{ query, schLib, pcbLib, fields? }` → `{ ok:true, lcsc, hasDuplicate, schlib, pcblib }`
+  （生成前检查目标库是否已有同名元件。`schlib.inventory` 来自 SchLib 头部 `LibRefN=`，`matches` 命中
+  本次要写入的 Design Item ID / 默认 ID / LCSC；`canOverwrite:false` 表示目标 SchLib 还含其它元件、
+  Altium 脚本无法只删除一个，只能终止或手动处理。`pcblib` 按封装名做字节扫描。）
+- `POST /api/build` body `{ query, outDir, schLib, pcbLib, keepDocs?, makePartLibs?, fields?, overwrite? }` → `{ ok:true, jobId }`（异步执行）
   `fields` 可选，`{ description?, designator?, comment?, designItemId? }` 覆盖预览里的四个字段；
   服务端只接受这四个键、单行化并限长（description 4000，其余 200），再以 `COMPONENT_FIELDS` JSON
-  环境变量传给管线。已存在的 SchLib 元件无法原地修改：字段有实际变化时会走与旧几何相同的重建路径
-  （仅当该 SchLib 里只有这一个元件），否则给出明确的 PROBLEM 提示。
+  环境变量传给管线。`overwrite:true`（用户在重复对话框选择「覆盖」）会以 `OVERWRITE=1` 传给管线，
+  强制重画目标库中已有的同名元件；缺省时保持幂等跳过。已存在的 SchLib 元件无法原地修改：字段有实际
+  变化或选择覆盖时会走与旧几何相同的重建路径（仅当该 SchLib 里只有这一个元件），否则给出明确的 PROBLEM 提示。
+- `POST /api/job/cancel` body `{ id }` → `{ ok:true, jobId, state, cancelled }`
+  （界面「重置」使用：终止该作业的管线进程树并清掉 activeJobId；非运行中的作业返回 `cancelled:false`。）
 - `POST /api/pick-path` body `{ mode:"folder"|"schlib"|"pcblib", current? }` → `{ ok:true, path }`
   （由本机弹出 Windows 原生选择框；取消时返回空 path。浏览器无法直接取得绝对路径。）
 - `GET /api/prefs` → `{ ok:true, prefs:{ paths, lists, options }, file }`

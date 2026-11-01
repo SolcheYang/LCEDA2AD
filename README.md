@@ -7,7 +7,7 @@
    `<输出目录>\<C编号>_SCH.SchDoc` 与 `<C编号>_PCB.PcbDoc`（只读副本在 `_source\`）；
 3. 回读解析这两个文档，校验引脚/焊盘数量；
 4. 用 **Altium 脚本 API（DelphiScript）**生成 `SchLib` / `PcbLib`，并追加到指定的
-   `.SchLib` / `.PcbLib`（不存在自动新建，同名幂等跳过）；
+   `.SchLib` / `.PcbLib`（不存在自动新建；同名时先提示，由界面选择覆盖或终止）；
 5. 复核库内名称与数量，输出 `RESULT: PASS` / `RESULT_JSON`。
 
 > **全程没有浏览器、没有登录、没有 UIA、没有鼠标点击。**
@@ -365,10 +365,14 @@ jobs\_lib-registry.json            内部版本登记表
   3D Body（`SVGNODE`）不重建。椭圆丝印弧用 10° 采样折线近似。
   中间产物 PcbDoc 目前不写 Region 记录（PcbLib 里有完整填充区），因此单独打开
   PcbDoc 时看不到外形/钢网填充。
-- 目标 SchLib 里已有同名组件时，程序**不会覆盖**（幂等跳过）。如果它是旧版本组件
-  且目标库只含这一颗料，v5 会自动备份（`.bak-时间戳`）并重建；如果目标库还含其他元件，
-  程序不会动它，会明确报错，请改用新的目标 SchLib 路径或手动删除该组件。
-  PcbLib 里的旧空组件会自动检测并重写。成功的作业会删除这些 `.bak` 备份。
+- 目标库里已有同名元件时，生成前会先检查并弹窗：选「覆盖」强制重画，选「终止」不写入任何文件。
+  SchLib 覆盖只在目标库只含这一颗料时安全（整库备份为 `.bak-时间戳` 后重建）；如果目标库还含
+  其他元件，脚本无法只删一个组件，「覆盖」会被禁用并说明原因，请手动删除该组件或换库。
+  PcbLib 可以直接删除同名封装后重画。显式「覆盖」留下的 `.bak` 备份会保留便于回滚；
+  普通旧版本重建仍按原规则清理备份。
+- 进度卡住或失败时，进度卡片右上角提供「刷新」（重新读取作业状态；页面刷新后也会按
+  `/api/health` 的 `activeJobId` 自动接回运行中的作业）与「重置」（运行中先终止管线，
+  再清空进度面板和日志）。
 - Description 优先取 EasyEDA `result.description`；如果该接口为空（例如 C92116），
   会用立创商城商品页的 `paramList` 生成参数摘要；两者都不可用时才留空。
   Value 只在 `c_para.Value` 存在时创建。
@@ -455,6 +459,9 @@ jobs\_lib-registry.json            内部版本登记表
 - `ALLOW_UNSAVED=1`：跳过“Altium 有未保存文档”的检查（默认禁止；仍不会关闭 Altium）
 - `KEEP_DOCS=1` / `MAKE_PART_LIBS=1`：保留 SchDoc/PcbDoc / 生成单件库
   （服务端按页面勾选传入；CLI 可直接设置）
+- `OVERWRITE=1`：强制重画目标库里的同名元件（服务端在重复对话框选择「覆盖」时传入）
+- `CANCEL_FILE=<路径>`：取消哨兵；文件出现时管线会杀掉自己启动的 Altium 并退出
+  （服务端「重置」按钮使用）
 - `ALLOW_FIXTURE=1`：仅调试，使用 `test/tmp-out` 离线数据
 - `DOC_ONLY=1`：只生成并回读 SchDoc/PcbDoc，不启动 Altium（试运行）
 - `LCEDA2ALTIUM_STATE_DIR` / `LCEDA2ALTIUM_NO_BROWSER=1`：启动器的状态目录覆盖 /

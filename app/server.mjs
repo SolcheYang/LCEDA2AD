@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 import { createUpdateChecker } from './lib/update-check.mjs';
 import { renderSymbolSvg, renderFootprintSvg } from './lib/preview-svg.mjs';
 import { schlibFields, sanitizeFieldOverrides } from './lib/component-fields.mjs';
+import { BLANK_SCH_COMPONENT, namesPresent, schLibComponentNames } from './lib/library-scan.mjs';
 
 // ───────────────────────────── 基础配置 ─────────────────────────────
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url)); // <root>/app
@@ -229,7 +230,7 @@ let pickInFlight = false;
 
 const nowMs = () => Date.now();
 
-function createJob({ query, requested, options, fields }) {
+function createJob({ query, requested, options, fields, overwrite }) {
   const id = nowMs().toString(36) + '-' + randomUUID().slice(0, 8);
   const job = {
     id, query,
@@ -244,6 +245,12 @@ function createJob({ query, requested, options, fields }) {
     options: options || { keepDocs: false, makePartLibs: false },
     // 预览里编辑过的四个元件字段；null = 全部使用模型默认值
     fields: fields || null,
+    // 用户在重复对话框里选择「覆盖」：管线强制重画目标库中已有的同名元件
+    overwrite: overwrite === true,
+    // 界面「重置」请求终止时置位，避免错误信息被归类成普通的管线失败
+    aborted: false,
+    // 取消哨兵：管线在阶段之间/Altium 轮询里检测到它就自行清理并退出。
+    cancelFile: path.join(ROOT_DIR, 'jobs', '.cancel-' + id + '.flag'),
     // 先按请求回显；管线跑完后用 RESULT_JSON 里的真实生效值覆盖
     paths: {
       outDir: requested.outDir,
@@ -307,6 +314,7 @@ function jobView(job) {
     lcsc: job.lcsc,
     paths: job.paths,
     fields: job.fields,
+    overwrite: job.overwrite === true,
     counts: job.counts,
     reason: job.reason,
     pipeline: job.pipeline,
@@ -551,6 +559,11 @@ function runPipeline(job, lcsc, paths, options = {}) {
     env[PATH_ENV.pcbLib] = paths.pcbLib;
     env.KEEP_DOCS = options.keepDocs ? '1' : '0';
     env.MAKE_PART_LIBS = options.makePartLibs ? '1' : '0';
+    // 界面选择「覆盖」时强制重画目标库里已有的同名元件，而不是幂等跳过。
+    env.OVERWRITE = job.overwrite ? '1' : '0';
+    // 取消哨兵：/api/job/cancel 写这个文件，管线看到后自行收尾。
+    if (job.cancelFile) env.CANCEL_FILE = job.cancelFile;
+    else delete env.CANCEL_FILE;
     // 预览里编辑过的元件字段（Description / Designator / Comment / Design Item ID）
     // 以 JSON 传给管线；空值时不设置，管线使用模型默认值。
     if (job.fields) env.COMPONENT_FIELDS = JSON.stringify(job.fields);
@@ -565,6 +578,9 @@ function runPipeline(job, lcsc, paths, options = {}) {
       env,
     });
     job.pipeline.pid = child.pid;
+    // 供 /api/job/cancel 等待子进程真正退出；否则「重置」后立即再生成会被 busy 拒绝。
+    let closeResolve;
+    job.pipeline.closed = new Promise((resolveClose) => { closeResolve = resolveClose; });
 
     let pending = '';
     let timedOut = false;
@@ -594,6 +610,7 @@ function runPipeline(job, lcsc, paths, options = {}) {
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      if (closeResolve) closeResolve();
       reject(new Error('无法启动管线进程：' + err.message));
     });
 
@@ -602,6 +619,7 @@ function runPipeline(job, lcsc, paths, options = {}) {
       if (pending.trim()) handlePipelineLine(job, pending);
       job.pipeline.exitCode = code;
       job.pipeline.signal = signal;
+      if (closeResolve) closeResolve();
       resolve({ code, signal, timedOut });
     });
   });
@@ -647,6 +665,7 @@ async function runBuildJob(job) {
     logLine(job, '本次输出目录：' + job.paths.outDir);
     logLine(job, '本次原理图库：' + job.paths.schLib);
     logLine(job, '本次封装库  ：' + job.paths.pcbLib);
+    logLine(job, '覆盖目标库同名元件：' + (job.overwrite ? '是（界面选择覆盖）' : '否（已存在时幂等跳过）'));
     if (job.fields) {
       const shown = ['designItemId', 'designator', 'comment', 'description']
         .filter((k) => typeof job.fields[k] === 'string')
@@ -670,6 +689,7 @@ async function runBuildJob(job) {
     // 1. 解析输入
     setStep(job, '解析输入', 'running', job.query);
     const lcsc = await resolveToLcsc(job);
+    if (job.aborted) throw new Error('作业已手动终止');
     job.lcsc = lcsc;
     job.artifacts = [];
     logLine(job, '目标元件：' + lcsc);
@@ -681,7 +701,9 @@ async function runBuildJob(job) {
     await ensureDir(job.paths.outDir, '输出');
     await ensureDir(path.dirname(job.paths.schLib), '原理图库');
     await ensureDir(path.dirname(job.paths.pcbLib), '封装库');
+    if (job.aborted) throw new Error('作业已手动终止');
     const result = await runPipeline(job, lcsc, job.paths, job.options);
+    if (job.aborted) throw new Error('作业已手动终止');
     await refreshArtifacts(job);
 
     const pipelineOk = job.result && job.result.ok === true;
@@ -728,10 +750,11 @@ async function runBuildJob(job) {
     logLine(job, '完成：作业 ' + job.id);
   } catch (err) {
     job.state = 'error';
-    job.error = readableError(err);
+    const aborted = job.aborted === true;
+    job.error = aborted ? '作业已手动终止（界面「重置」）。' : readableError(err);
     const running = job.steps.find((s) => s.status === 'running');
-    if (running) setStep(job, running.name, 'error', '失败');
-    logLine(job, '错误：' + job.error);
+    if (running) setStep(job, running.name, aborted ? 'warn' : 'error', aborted ? '已手动终止' : '失败');
+    logLine(job, (aborted ? '已终止：' : '错误：') + job.error);
     await refreshArtifacts(job).catch(() => {});
   } finally {
     job.finishedAt = nowMs();
@@ -859,6 +882,7 @@ function isLocalOrigin(req) {
 // 启动器用它判断“这个端口上跑的是不是本工程的服务”，并取得 pid 用于停止。
 // 服务仅监听 127.0.0.1，返回内容不含敏感信息。
 async function apiHealth(res) {
+  const active = activeJobId ? jobs.get(activeJobId) : null;
   return sendJson(res, {
     ok: true,
     app: 'lceda2altium',
@@ -867,7 +891,12 @@ async function apiHealth(res) {
     port: PORT,
     root: ROOT_DIR,
     startedAt: STARTED_AT,
-    busy: Boolean(activeJobId),
+    busy: Boolean(active),
+    // 页面刷新后用 activeJobId 重新接回正在运行的作业（作业记录只在内存里）。
+    activeJobId: active ? active.id : null,
+    activeJob: active
+      ? { id: active.id, query: active.query, lcsc: active.lcsc, state: active.state, startedAt: active.createdAt }
+      : null,
     // 便携版/多副本时，UI 的默认路径必须跟随本实例的根目录，而不是写死原工程路径。
     defaults: DEFAULTS,
     prefsFile: PREFS_FILE,
@@ -986,6 +1015,28 @@ function previewCacheSet(lcsc, payload) {
   }
 }
 
+/* ───────────── 元件模型缓存（预览与重复检查共用，避免重复请求数据层） ───────────── */
+const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
+const MODEL_CACHE_MAX = 40;
+const modelCache = new Map();
+
+async function fetchModelCached(lcsc) {
+  const hit = modelCache.get(lcsc);
+  if (hit && nowMs() - hit.at <= MODEL_CACHE_TTL_MS) return hit.model;
+  const data = await loadLayer('data');
+  const model = await withTimeout(
+    data.fetchComponentModel(lcsc), PREVIEW_TIMEOUT_MS,
+    '元件数据加载超时（' + Math.round(PREVIEW_TIMEOUT_MS / 1000) + ' 秒），请检查网络后重试');
+  if (!model || typeof model !== 'object') throw new Error('元件数据为空：' + lcsc);
+  modelCache.delete(lcsc);
+  modelCache.set(lcsc, { at: nowMs(), model });
+  while (modelCache.size > MODEL_CACHE_MAX) {
+    const oldest = modelCache.keys().next().value;
+    modelCache.delete(oldest);
+  }
+  return model;
+}
+
 async function apiPreview(url, res) {
   const raw = (url.searchParams.get('lcsc') || url.searchParams.get('q') || '').trim();
   if (!raw) {
@@ -1000,13 +1051,7 @@ async function apiPreview(url, res) {
   if (cached) return sendJson(res, { ...cached, cached: true });
 
   try {
-    const data = await loadLayer('data');
-    const model = await withTimeout(
-      data.fetchComponentModel(lcsc), PREVIEW_TIMEOUT_MS,
-      '预览加载超时（' + Math.round(PREVIEW_TIMEOUT_MS / 1000) + ' 秒），请检查网络后重试');
-    if (!model || typeof model !== 'object') {
-      return sendJson(res, { ok: false, error: '预览数据为空：' + lcsc });
-    }
+    const model = await fetchModelCached(lcsc);
     // fields = 生成 SchLib 时会写入的四个属性（默认值），页面可直接编辑后再生成。
     const payload = {
       ok: true,
@@ -1031,6 +1076,109 @@ async function apiPreview(url, res) {
     console.warn('[preview] 失败：' + error);
     return sendJson(res, { ok: false, error: '预览加载失败：' + error });
   }
+}
+
+/* ─────────────────── 目标库重复检查（生成前询问覆盖 / 终止） ─────────────────── */
+const normalizeLcsc = (raw) => {
+  const q = String(raw == null ? '' : raw).trim();
+  return LCSC_RE.test(q) ? 'C' + q.slice(1).toUpperCase() : null;
+};
+
+/** C number as-is, or resolve a name through the data layer (same path /api/build uses). */
+async function resolveQueryLcsc(query) {
+  const direct = normalizeLcsc(query);
+  if (direct) return direct;
+  const data = await loadLayer('data');
+  const resolved = await withTimeout(data.resolveComponent(query), DATA_TIMEOUT_MS,
+    '解析名称超时（' + Math.round(DATA_TIMEOUT_MS / 1000) + ' 秒），请检查网络或直接填 C 编号');
+  const chosen = resolved && resolved.chosen;
+  const lcsc = chosen && normalizeLcsc(chosen.lcsc);
+  if (!lcsc) throw new Error('未找到元件「' + query + '」：数据层没有返回可用候选。请换个名称，或直接输入立创编号。');
+  return lcsc;
+}
+
+/**
+ * Which components the target libraries would already hold for this model.
+ * SchLib names come from the ASCII header (complete list); PcbLib is a byte
+ * scan for the footprint name, exactly like the pipeline's duplicate guards.
+ */
+function buildDuplicateReport(lcsc, paths, fields, model) {
+  const defaults = schlibFields(model);
+  const effective = schlibFields(fields ? { ...model, ...fields } : model);
+  const libName = effective.designItemId || lcsc;
+  const previousName = defaults.designItemId;
+  const schCandidates = Array.from(new Set([libName, previousName, model.lcsc, lcsc].filter(Boolean)));
+
+  const schExists = fs.existsSync(paths.schLib);
+  let inventory = [];
+  let byteMatches = [];
+  try { inventory = schExists ? schLibComponentNames(paths.schLib) : []; } catch { inventory = []; }
+  try { byteMatches = schExists ? namesPresent(paths.schLib, schCandidates) : []; } catch { byteMatches = []; }
+  const matches = inventory.length ? inventory.filter((n) => schCandidates.includes(n)) : byteMatches;
+  const schDuplicate = matches.length > 0;
+  const others = inventory.filter((n) => n && !schCandidates.includes(n) && !BLANK_SCH_COMPONENT.test(n));
+  // The SchLib scripting API cannot remove a single component; replacing the
+  // whole file is safe only when this part is the library's sole component.
+  const schCanOverwrite = !schDuplicate || (inventory.length > 0 && others.length === 0);
+  let schReason = '';
+  if (schDuplicate && !schCanOverwrite) {
+    schReason = inventory.length
+      ? '该 SchLib 还包含其它元件（' + others.join(', ') + '），Altium 脚本无法只删除一个元件；'
+        + '请先在 Altium 里删除 ' + libName + ' 后重试，或换一个 SchLib。'
+      : '无法读取该 SchLib 的元件清单（文件可能损坏或正被 Altium 占用），不能安全覆盖；'
+        + '请关闭 Altium 后重试，或换一个 SchLib。';
+  }
+
+  const pkg = String(model.package || lcsc).trim();
+  const pcbExists = fs.existsSync(paths.pcbLib);
+  let pcbMatches = [];
+  try { pcbMatches = pcbExists ? namesPresent(paths.pcbLib, [pkg]) : []; } catch { pcbMatches = []; }
+  const pcbDuplicate = pcbMatches.length > 0;
+
+  return {
+    lcsc,
+    schlib: {
+      file: paths.schLib, exists: schExists, name: libName,
+      inventory, matches, others, duplicate: schDuplicate,
+      canOverwrite: schCanOverwrite, reason: schReason,
+    },
+    pcblib: {
+      file: paths.pcbLib, exists: pcbExists, name: pkg,
+      matches: pcbMatches, duplicate: pcbDuplicate,
+      canOverwrite: true, reason: '',
+    },
+    hasDuplicate: schDuplicate || pcbDuplicate,
+  };
+}
+
+async function apiCheckDuplicate(req, res) {
+  let body;
+  try { body = await readJsonBody(req); }
+  catch (err) { return sendJson(res, { ok: false, error: readableError(err) }); }
+  const query = typeof body.query === 'string' ? body.query.trim()
+    : (typeof body.q === 'string' ? body.q.trim() : '');
+  if (!query) {
+    return sendJson(res, { ok: false, error: '缺少 query（元件名称或立创编号）' + DEFAULT_HINT });
+  }
+  const requested = {
+    outDir: resolvePathInput(body.outDir, DEFAULTS.outDir),
+    schLib: resolvePathInput(body.schLib, DEFAULTS.schLib),
+    pcbLib: resolvePathInput(body.pcbLib, DEFAULTS.pcbLib),
+  };
+  const fields = sanitizeFieldOverrides(body.fields);
+  let lcsc;
+  try { lcsc = await resolveQueryLcsc(query); }
+  catch (err) { return sendJson(res, { ok: false, error: readableError(err) }); }
+  let model;
+  try { model = await fetchModelCached(lcsc); }
+  catch (err) {
+    return sendJson(res, { ok: false, error: '重复检查失败（读取元件数据）：' + readableError(err) });
+  }
+  const report = buildDuplicateReport(lcsc, requested, fields, model);
+  console.log('[check-duplicate] ' + lcsc + ' schlib=' + (report.schlib.duplicate ? 'dup' : '-')
+    + ' pcblib=' + (report.pcblib.duplicate ? 'dup' : '-')
+    + ' canOverwrite=' + (report.schlib.canOverwrite && report.pcblib.canOverwrite));
+  return sendJson(res, { ok: true, query, paths: requested, ...report });
 }
 
 async function apiBuild(req, res) {
@@ -1062,10 +1210,16 @@ async function apiBuild(req, res) {
   };
   // 可选的元件字段覆盖（来自预览里的编辑框）；只接受已知字段并限制长度。
   const fields = sanitizeFieldOverrides(body.fields);
-  const job = createJob({ query, requested, options, fields });
+  // 重复对话框选择「覆盖」时为 true：强制重画目标库里已有的同名元件。
+  const overwrite = body.overwrite === true;
+  const job = createJob({ query, requested, options, fields, overwrite });
   console.log('[build] 派发作业 ' + job.id + '：' + query + ' options=' + JSON.stringify(options)
+    + ' overwrite=' + overwrite
     + (fields ? ' fields=' + JSON.stringify(fields) : ''));
-  sendJson(res, { ok: true, jobId: job.id, state: job.state, query, paths: job.paths, options: job.options, defaults: DEFAULTS });
+  sendJson(res, {
+    ok: true, jobId: job.id, state: job.state, query, paths: job.paths,
+    options: job.options, overwrite: job.overwrite, defaults: DEFAULTS,
+  });
   void runBuildJob(job);
 }
 
@@ -1078,6 +1232,45 @@ async function apiJob(url, res) {
   }
   await refreshArtifacts(job).catch(() => {});
   return sendJson(res, jobView(job));
+}
+
+// POST /api/job/cancel { id } — UI「重置」在作业运行/卡住时先终止管线。
+async function apiJobCancel(req, res) {
+  let body;
+  try { body = await readJsonBody(req); }
+  catch (err) { return sendJson(res, { ok: false, error: readableError(err) }); }
+  const id = String(body.id || '').trim();
+  if (!id) return sendJson(res, { ok: false, error: '缺少作业 id' });
+  const job = jobs.get(id);
+  if (!job) return sendJson(res, { ok: false, error: '作业不存在：' + id });
+  if (job.state !== 'running') {
+    return sendJson(res, { ok: true, jobId: id, state: job.state, cancelled: false });
+  }
+  job.aborted = true;
+  logLine(job, '收到界面「重置」请求：正在终止当前管线…');
+  // 1) 先写哨兵文件：管线自己的轮询会杀掉它启动的 Altium，再退出。
+  if (job.cancelFile) {
+    try {
+      await fsp.mkdir(path.dirname(job.cancelFile), { recursive: true });
+      await fsp.writeFile(job.cancelFile, 'cancel');
+    } catch (err) {
+      logLine(job, '写入取消标记失败：' + readableError(err));
+    }
+  }
+  const closed = job.pipeline && job.pipeline.closed;
+  if (closed) await Promise.race([closed, new Promise((r) => setTimeout(r, 10000))]);
+  // 2) 管线仍未退出（可能卡在网络阶段）→ 强杀进程树，再等它关闭。
+  if (activeJobId === job.id && job.pipeline && job.pipeline.pid) {
+    try { await killTree(job.pipeline.pid); }
+    catch (err) { logLine(job, '终止管线失败：' + readableError(err)); }
+    if (closed) await Promise.race([closed, new Promise((r) => setTimeout(r, 5000))]);
+  }
+  if (job.cancelFile) {
+    try { await fsp.rm(job.cancelFile, { force: true }); } catch { /* 已删除 */ }
+  }
+  if (activeJobId === job.id) activeJobId = null;
+  console.log('[cancel] 作业 ' + id + ' 已请求终止');
+  return sendJson(res, { ok: true, jobId: id, state: 'cancelled', cancelled: true });
 }
 
 // POST /api/pick-path { mode: 'folder'|'schlib'|'pcblib', current?: string }
@@ -1211,13 +1404,15 @@ async function handle(req, res) {
       return sendJson(res, { ok: false, error: '请使用 POST 调用 /api/build' });
     }
     if (pathname.startsWith('/api/')) {
-      return sendJson(res, { ok: false, error: '未知接口：' + pathname + '（可用：/api/health、/api/prefs、/api/search、/api/preview、/api/build、/api/job、/api/pick-path、/api/update）' });
+      return sendJson(res, { ok: false, error: '未知接口：' + pathname + '（可用：/api/health、/api/prefs、/api/search、/api/preview、/api/check-duplicate、/api/build、/api/job、/api/job/cancel、/api/pick-path、/api/update）' });
     }
     return serveStatic(req, res, pathname);
   }
   if (method === 'POST') {
     if (pathname === '/api/prefs') return apiPrefsPost(req, res);
     if (pathname === '/api/pick-path') return apiPickPath(req, res);
+    if (pathname === '/api/check-duplicate') return apiCheckDuplicate(req, res);
+    if (pathname === '/api/job/cancel') return apiJobCancel(req, res);
     if (pathname === '/api/build') return apiBuild(req, res);
     if (pathname === '/api/update/check') return apiUpdateCheck(req, res);
     if (pathname === '/api/update/dismiss') return apiUpdateDismiss(req, res);
