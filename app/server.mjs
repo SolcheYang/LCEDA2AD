@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createUpdateChecker } from './lib/update-check.mjs';
 import { renderSymbolSvg, renderFootprintSvg } from './lib/preview-svg.mjs';
+import { schlibFields, sanitizeFieldOverrides } from './lib/component-fields.mjs';
 
 // ───────────────────────────── 基础配置 ─────────────────────────────
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url)); // <root>/app
@@ -228,7 +229,7 @@ let pickInFlight = false;
 
 const nowMs = () => Date.now();
 
-function createJob({ query, requested, options }) {
+function createJob({ query, requested, options, fields }) {
   const id = nowMs().toString(36) + '-' + randomUUID().slice(0, 8);
   const job = {
     id, query,
@@ -241,6 +242,8 @@ function createJob({ query, requested, options }) {
     log: [],
     error: null,
     options: options || { keepDocs: false, makePartLibs: false },
+    // 预览里编辑过的四个元件字段；null = 全部使用模型默认值
+    fields: fields || null,
     // 先按请求回显；管线跑完后用 RESULT_JSON 里的真实生效值覆盖
     paths: {
       outDir: requested.outDir,
@@ -303,6 +306,7 @@ function jobView(job) {
     query: job.query,
     lcsc: job.lcsc,
     paths: job.paths,
+    fields: job.fields,
     counts: job.counts,
     reason: job.reason,
     pipeline: job.pipeline,
@@ -547,6 +551,10 @@ function runPipeline(job, lcsc, paths, options = {}) {
     env[PATH_ENV.pcbLib] = paths.pcbLib;
     env.KEEP_DOCS = options.keepDocs ? '1' : '0';
     env.MAKE_PART_LIBS = options.makePartLibs ? '1' : '0';
+    // 预览里编辑过的元件字段（Description / Designator / Comment / Design Item ID）
+    // 以 JSON 传给管线；空值时不设置，管线使用模型默认值。
+    if (job.fields) env.COMPONENT_FIELDS = JSON.stringify(job.fields);
+    else delete env.COMPONENT_FIELDS;
     // 页面里配置的 Altium 路径通过环境变量传给管线（run-stages/emit-*/run-altium 都读它）。
     env.ALTIUM_EXE = job.altiumExe || DEFAULT_ALTIUM_EXE;
     // UI 不暴露 fixture 开关：只有运维在服务进程环境里显式设置 ALLOW_FIXTURE=1 才会用 test/tmp-out 的调试数据
@@ -639,6 +647,13 @@ async function runBuildJob(job) {
     logLine(job, '本次输出目录：' + job.paths.outDir);
     logLine(job, '本次原理图库：' + job.paths.schLib);
     logLine(job, '本次封装库  ：' + job.paths.pcbLib);
+    if (job.fields) {
+      const shown = ['designItemId', 'designator', 'comment', 'description']
+        .filter((k) => typeof job.fields[k] === 'string')
+        .map((k) => k + '=' + JSON.stringify(job.fields[k]))
+        .join(' · ');
+      logLine(job, '元件字段（界面中修改）：' + (shown || '(无)'));
+    }
 
     const altium = resolveAltiumExe(await readPrefs());
     job.altiumExe = altium.exe;
@@ -992,6 +1007,7 @@ async function apiPreview(url, res) {
     if (!model || typeof model !== 'object') {
       return sendJson(res, { ok: false, error: '预览数据为空：' + lcsc });
     }
+    // fields = 生成 SchLib 时会写入的四个属性（默认值），页面可直接编辑后再生成。
     const payload = {
       ok: true,
       lcsc: model.lcsc || lcsc,
@@ -999,6 +1015,7 @@ async function apiPreview(url, res) {
       package: model.package || '',
       value: model.value || '',
       description: model.description || '',
+      fields: schlibFields(model),
       pinCount: Array.isArray(model.symbol && model.symbol.pins) ? model.symbol.pins.length : 0,
       padCount: Array.isArray(model.footprint && model.footprint.pads) ? model.footprint.pads.length : 0,
       symbolSvg: renderSymbolSvg(model),
@@ -1043,8 +1060,11 @@ async function apiBuild(req, res) {
     keepDocs: body.keepDocs === true,
     makePartLibs: body.makePartLibs === true,
   };
-  const job = createJob({ query, requested, options });
-  console.log('[build] 派发作业 ' + job.id + '：' + query + ' options=' + JSON.stringify(options));
+  // 可选的元件字段覆盖（来自预览里的编辑框）；只接受已知字段并限制长度。
+  const fields = sanitizeFieldOverrides(body.fields);
+  const job = createJob({ query, requested, options, fields });
+  console.log('[build] 派发作业 ' + job.id + '：' + query + ' options=' + JSON.stringify(options)
+    + (fields ? ' fields=' + JSON.stringify(fields) : ''));
   sendJson(res, { ok: true, jobId: job.id, state: job.state, query, paths: job.paths, options: job.options, defaults: DEFAULTS });
   void runBuildJob(job);
 }

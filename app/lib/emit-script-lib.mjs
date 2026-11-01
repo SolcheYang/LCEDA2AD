@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import iconv from 'iconv-lite';
 import { validatePas, toAscii } from './emit-altium.mjs';
+import { schlibFields } from './component-fields.mjs';
 
 const DEFAULT_ALTIUM_EXE = 'E:\\AD\\AD\\X2.EXE';
 const KNOWN_STEPS = ['schlib_part', 'schlib', 'pcblib_part', 'pcblib'];
@@ -104,12 +105,10 @@ const pcbLayer = (l) => PCB_LAYER[String(l || '').toLowerCase()] || 'eTopLayer';
 
 // LCEDA keeps the reference prefix in head.c_para.pre ("R?", "U?", "SW?").
 // The SchLib designator is that uppercase prefix plus "??"; U is only a fallback
-// for payloads written before the model carried designatorPrefix.
-const DESIGNATOR_FALLBACK = 'U';
+// for payloads written before the model carried designatorPrefix. A user-edited
+// model.designator overrides the derived value (see component-fields.mjs).
 export function designatorText(model) {
-  const letters = String((model && model.designatorPrefix) || '')
-    .toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
-  return (letters || DESIGNATOR_FALLBACK) + '??';
+  return schlibFields(model).designator;
 }
 
 /**
@@ -224,17 +223,18 @@ function symbolBBox(shapes, pins) {
 export function buildSymbolBody(model, lcsc) {
   const out = [];
   const sym = model.symbol || {};
-  const libName = toAscii(model.mpn || lcsc).trim() || lcsc;
+  const fields = schlibFields(model);
+  // quoteWide keeps Chinese / Ω / ± intact (the .pas file is written as GBK).
   out.push("    W('BS libref');");
-  out.push('    Target.LibReference         := ' + quote(libName) + ';');
+  out.push('    Target.LibReference         := ' + quoteWide(fields.designItemId) + ';');
   out.push("    W('BS designitemid');");
-  out.push('    Target.DesignItemID         := ' + quote(libName) + ';');
+  out.push('    Target.DesignItemID         := ' + quoteWide(fields.designItemId) + ';');
   out.push("    W('BS description');");
-  out.push('    Target.ComponentDescription := ' + quoteWide(model.description || '') + ';');
+  out.push('    Target.ComponentDescription := ' + quoteWide(fields.description) + ';');
   out.push("    W('BS designator');");
-  out.push('    Target.Designator.Text      := ' + quote(designatorText(model)) + ';');
+  out.push('    Target.Designator.Text      := ' + quoteWide(fields.designator) + ';');
   out.push("    W('BS commenttext');");
-  out.push('    Target.Comment.Text         := ' + quote(libName) + ';');
+  out.push('    Target.Comment.Text         := ' + quoteWide(fields.comment) + ';');
   out.push("    W('BS commenthidden');");
   out.push('    Target.Comment.IsHidden     := True;');
   const value = String(model.value || '').trim();
@@ -499,7 +499,10 @@ export function buildRegionBody(model) {
 function fileHasName(filePath, name) {
   try {
     const buf = fs.readFileSync(filePath);
-    return buf.includes(Buffer.from(String(name), 'utf16le')) || buf.includes(Buffer.from(String(name), 'latin1'));
+    const text = String(name);
+    const needles = [Buffer.from(text, 'utf16le'), Buffer.from(text, 'latin1')];
+    try { needles.push(iconv.encode(text, 'gbk')); } catch { /* invalid for GBK: ignore */ }
+    return needles.some((needle) => needle.length > 0 && buf.includes(needle));
   } catch {
     return false;
   }
@@ -539,7 +542,8 @@ export async function emitScriptJob(model, opts = {}) {
   };
 
   const pkg = String(model.package || lcsc);
-  const libName = toAscii(model.mpn || lcsc).trim() || lcsc;
+  // The SchLib identity is the (possibly user-edited) Design Item ID.
+  const libName = schlibFields(model).designItemId || lcsc;
   const fpRegions = (model.footprint && model.footprint.regions) || [];
   const validRegions = fpRegions.filter((r) => Array.isArray(r.points) && r.points.length >= 3);
   const solidRegionCount = validRegions.filter((r) => String(r.kind || 'solid').toLowerCase() === 'solid').length;

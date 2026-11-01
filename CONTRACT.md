@@ -12,6 +12,9 @@
   "description": "10K 1% 0603",
   "datasheet": "https://...",
   "designatorPrefix": "R",
+  "designator": "R??",
+  "comment": "0603WAF1002T5E",
+  "designItemId": "0603WAF1002T5E",
   "symbol": {
     "pins": [
       { "number": "1", "name": "~", "x": -100, "y": 0, "orient": 0,
@@ -53,6 +56,12 @@
 - `designatorPrefix` = 立创 EDA `head.c_para.pre` 的字母部分（转大写，如 `R?`→`R`、`CN?`→`CN`）。
   SchLib 的 Designator 写成 `<designatorPrefix>??`（如 `R??`、`U??`、`CN??`），保证前缀与立创 EDA 一致；
   模型缺该字段（旧 `component.json`）时回退 `U`。
+- 可选字段覆盖（预览页可编辑，扫描/解析数据层不会写入）——
+  `description`（EasyEDA 描述，可直接改，空串=清空）、`designator`（完整位号文本，如 `R??`）、
+  `comment`（Comment 文本）、`designItemId`（Design Item ID，同时作为 SchLib 的 LibReference / 库内组件名）。
+  缺省时：`designator = <designatorPrefix>??`、`comment = designItemId = mpn`（mpn 为空时用 lcsc）。
+  `designator` / `designItemId` 为空串时回退默认值；`comment` / `description` 允许空串。
+  统一由 `app/lib/component-fields.mjs` 的 `schlibFields(model)` 计算，预览、SchDoc、SchLib、PcbLib 共用。
 - `shape` ∈ {round,rect,octagonal}；`layer` ∈ {top,bottom,multi,top_overlay,bottom_overlay,top_paste,bottom_paste,top_solder,bottom_solder,board_outline,document,top_assembly,bottom_assembly,mechanical,component_shape,lead_shape,component_marking}；`hole` = 孔径 mm，0=SMD（通孔件 `layer:"multi"` 且 hole>0）。
   层名对应 EasyEDA 标准层：1 top / 2 bottom / 3 top_overlay / 4 bottom_overlay / 5 top_paste / 6 bottom_paste / 7 top_solder / 8 bottom_solder / 10 board_outline / 11 multi / 12 document / 13 top_assembly / 14 bottom_assembly / 15 mechanical / 99 component_shape / 100 lead_shape / 101 component_marking。
 - `rotation` = 焊盘旋转角（度，0–360）；`plated` 缺省为 `true`，`false` = 非金属化机械孔（NPTH，通常 `number:""`、`w=h=hole`）。EasyEDA 的 `HOLE` 记录归一化为这种 pad。
@@ -123,10 +132,15 @@ HTTP（仅 localhost，端口 43180，可用 PORT 覆盖）：
 - `GET /` → `app/public/index.html`
 - `GET /api/health` → `{ ok:true, app:"lceda2altium", version, pid, port, root, startedAt, busy }`（启动器用于复用实例与停止服务）
 - `GET /api/search?q=...` → `{ ok:true, candidates:[...] }`
-- `GET /api/preview?lcsc=C25804` → `{ ok:true, lcsc, mpn, package, value, description, pinCount, padCount, symbolSvg, footprintSvg }`
+- `GET /api/preview?lcsc=C25804` → `{ ok:true, lcsc, mpn, package, value, description, fields, pinCount, padCount, symbolSvg, footprintSvg }`
   （把 ComponentModel 的符号/封装几何渲染成内联 SVG 供页面预览；只读、不落盘，结果缓存 10 分钟。
+  `fields = { description, designator, comment, designItemId }` 是生成 SchLib 时会写入的四个属性的默认值。
   参数必须是 C 编号；按名称搜索请先走 `/api/search`。）
-- `POST /api/build` body `{ query, outDir, schLib, pcbLib }` → `{ ok:true, jobId }`（异步执行）
+- `POST /api/build` body `{ query, outDir, schLib, pcbLib, keepDocs?, makePartLibs?, fields? }` → `{ ok:true, jobId }`（异步执行）
+  `fields` 可选，`{ description?, designator?, comment?, designItemId? }` 覆盖预览里的四个字段；
+  服务端只接受这四个键、单行化并限长（description 4000，其余 200），再以 `COMPONENT_FIELDS` JSON
+  环境变量传给管线。已存在的 SchLib 元件无法原地修改：字段有实际变化时会走与旧几何相同的重建路径
+  （仅当该 SchLib 里只有这一个元件），否则给出明确的 PROBLEM 提示。
 - `POST /api/pick-path` body `{ mode:"folder"|"schlib"|"pcblib", current? }` → `{ ok:true, path }`
   （由本机弹出 Windows 原生选择框；取消时返回空 path。浏览器无法直接取得绝对路径。）
 - `GET /api/prefs` → `{ ok:true, prefs:{ paths, lists, options }, file }`

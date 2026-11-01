@@ -16,14 +16,17 @@
 //   4. assert counts and files, print RESULT_JSON
 //
 // Env: OUT_DIR, LIB_SCH, LIB_PCB, ALLOW_FIXTURE=1, ALLOW_KILL_EXISTING=1, ALTIUM_EXE,
-//      ALTIUM_STARTUP_MS, PIPELINE_TIMEOUT_MS (the server sets the first three).
+//      ALTIUM_STARTUP_MS, PIPELINE_TIMEOUT_MS (the server sets the first three),
+//      COMPONENT_FIELDS = JSON { description, designator, comment, designItemId }.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import iconv from 'iconv-lite';
 import { runAltiumJob } from '../app/lib/run-altium.mjs';
 import { emitScriptJob, LIB_MARKER_SCH, LIB_MARKER_PCB } from '../app/lib/emit-script-lib.mjs';
-import { countDocumentRecords, toAscii } from '../app/lib/emit-altium.mjs';
+import { FIELD_KEYS, schlibFields, sanitizeFieldOverrides, withFieldOverrides } from '../app/lib/component-fields.mjs';
+import { countDocumentRecords } from '../app/lib/emit-altium.mjs';
 import { parseSchDoc, parsePcbDoc } from '../app/lib/doc-parse.mjs';
 import { buildSchDoc, buildPcbDoc } from '../app/lib/altium-doc-writer.mjs';
 
@@ -109,11 +112,49 @@ function readRegistry() {
 function writeRegistry(reg) {
   try { fs.mkdirSync(path.dirname(REGISTRY), { recursive: true }); fs.writeFileSync(REGISTRY, JSON.stringify(reg, null, 2)); } catch { /* best effort */ }
 }
+/** Byte scan for a component name; SchLib/PcbLib may store ANSI, GBK or UTF-16. */
+function bufferHasText(buf, text) {
+  const value = String(text == null ? '' : text);
+  if (!value) return false;
+  const needles = [Buffer.from(value, 'latin1'), Buffer.from(value, 'utf16le')];
+  try { needles.push(iconv.encode(value, 'gbk')); } catch { /* not GBK-encodable: ignore */ }
+  return needles.some((needle) => needle.length > 0 && buf.includes(needle));
+}
 function namesPresent(file, candidates) {
   if (!fs.existsSync(file)) return [];
   const buf = fs.readFileSync(file);
-  return candidates.filter((n) => n && (buf.includes(Buffer.from(n, 'latin1')) || buf.includes(Buffer.from(n, 'utf16le'))));
+  return candidates.filter((n) => n && bufferHasText(buf, n));
 }
+
+/**
+ * Every component name stored in a SchLib, read from the ASCII header
+ * (`CompCount=n|LibRef0=...`). The scripting API cannot enumerate SchLib
+ * components, so this header scan is the only complete list; it is what keeps
+ * the "sole-component rebuild" from deleting a component the registry forgot.
+ */
+function schLibComponentNames(file) {
+  if (!fs.existsSync(file)) return [];
+  try {
+    const text = fs.readFileSync(file).toString('latin1');
+    const names = [];
+    // Non-ASCII names are stored as %UTF8%LibRefN=..., everything else as LibRefN=.
+    const re = /(^|\||%)(LibRef\d+=)([^|]*)/g;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+      let name = match[3];
+      if (match[1] === '%') {
+        try { name = Buffer.from(name, 'latin1').toString('utf8'); } catch { /* keep raw */ }
+      }
+      name = name.trim();
+      if (name) names.push(name);
+    }
+    return Array.from(new Set(names));
+  } catch {
+    return [];
+  }
+}
+// Altium's blank placeholder in a fresh SchLib; it carries no geometry.
+const BLANK_SCH_COMPONENT = /^Component_\d+$/i;
 
 /** Folder name from the component name; strips Windows-invalid characters. */
 function safeFolderName(value) {
@@ -276,11 +317,29 @@ async function main() {
       fail('检测到 Altium 有未保存文档：' + unsaved.join(' | ') + '。请先 Ctrl+S 保存（不用关闭 Altium），再重试。', 3);
     }
   }
-  const model = await loadModel();
+  let model = await loadModel();
+  // UI field overrides (Description / Designator / Comment / Design Item ID).
+  // The server passes them as JSON in COMPONENT_FIELDS; they only affect the
+  // generated library, never the geometry.
+  const rawFields = (() => {
+    if (!process.env.COMPONENT_FIELDS) return null;
+    try { return JSON.parse(process.env.COMPONENT_FIELDS); } catch { return null; }
+  })();
+  const fieldOverrides = sanitizeFieldOverrides(rawFields);
+  // Compare with the values the emitter would have used anyway: the UI always
+  // posts its four fields, so only a real difference may trigger a rebuild of
+  // an existing SchLib component (an unchanged rerun must stay an idempotent skip).
+  const defaultFields = schlibFields(model);
+  if (fieldOverrides) model = withFieldOverrides(model, fieldOverrides);
+  const effectiveFields = schlibFields(model);
+  const fieldChanges = FIELD_KEYS.filter((key) => effectiveFields[key] !== defaultFields[key]);
+  if (fieldChanges.length) {
+    log('fields override: ' + fieldChanges.map((k) => k + '=' + JSON.stringify(effectiveFields[k])).join(' · '));
+  }
   const wantPins = model.symbol.pins.length;
   const wantPads = model.footprint.pads.length;
   log('model: ' + model.lcsc + ' ' + (model.package || '') + ' pins=' + wantPins + ' pads=' + wantPads
-    + ' designator=' + (String(model.designatorPrefix || '').toUpperCase().replace(/[^A-Z]/g, '') || 'U') + '??');
+    + ' designator=' + schlibFields(model).designator);
   log('paths: OUT_DIR=' + OUT_DIR);
   log('paths: LIB_SCH=' + LIB_SCH);
   log('paths: LIB_PCB=' + LIB_PCB);
@@ -396,6 +455,7 @@ async function main() {
     log('RESULT: PASS (DOC_ONLY)');
     log('RESULT_JSON ' + JSON.stringify({
       ok: true, docOnly: true, lcsc: LCSC, outDir: OUT_DIR, schLib: LIB_SCH, pcbLib: LIB_PCB,
+      fields: effectiveFields,
       counts: { schPins: docModel.symbol.pins.length, pcbPads: docModel.footprint.pads.length },
       source: docSource, artifacts,
     }));
@@ -405,20 +465,33 @@ async function main() {
   // ---- before/after names for the target libraries ----
   const registry = readRegistry();
   const versions = (registry.__versions && typeof registry.__versions === 'object') ? registry.__versions : {};
-  const libName = toAscii(model.mpn || model.lcsc).trim() || model.lcsc;
+  // Same identity the SchLib emitter writes (Design Item ID, user-editable).
+  const libName = schlibFields(docModel).designItemId || model.lcsc;
+  // The name this part would have had without the UI override. It is what an
+  // earlier run wrote into the target SchLib, so a renamed Design Item ID must
+  // still be recognised as the same component (otherwise a duplicate appears).
+  const previousName = defaultFields.designItemId;
+  const schNameCandidates = Array.from(new Set([libName, previousName].filter(Boolean)));
+  // The SchLib API cannot edit an existing component in place, so an edited
+  // field on an already-present part has to go through the same rebuild path as
+  // stale geometry (safe only when that library holds this single component).
+  const schFieldStale = fieldChanges.length > 0
+    && (namesPresent(LIB_SCH, schNameCandidates).length > 0 || namesPresent(LIB_SCH, [LCSC]).length > 0);
   const schCurrent = versions[LIB_SCH] === LIB_MARKER_SCH && fs.existsSync(LIB_SCH)
-    && namesPresent(LIB_SCH, [libName]).length > 0;
+    && namesPresent(LIB_SCH, [libName]).length > 0 && !schFieldStale;
   const pcbCurrent = versions[LIB_PCB] === LIB_MARKER_PCB && fs.existsSync(LIB_PCB)
     && !!pkg && namesPresent(LIB_PCB, [pkg]).length > 0;
   log('LIB VERSION schlib=' + (versions[LIB_SCH] || '(none)') + ' current=' + schCurrent);
   log('LIB VERSION pcblib=' + (versions[LIB_PCB] || '(none)') + ' current=' + pcbCurrent);
-  const schNames = Array.from(new Set([...(registry[LIB_SCH] || []), libName, LCSC]));
+  const schNames = Array.from(new Set([...(registry[LIB_SCH] || []), ...schNameCandidates, LCSC]));
   const pcbNames = Array.from(new Set([...(registry[LIB_PCB] || []), pkg]));
   const sizeOf = (p) => (fs.existsSync(p) ? fs.statSync(p).size : 0);
   const before = {
     sch: { bytes: sizeOf(LIB_SCH), names: namesPresent(LIB_SCH, schNames) },
     pcb: { bytes: sizeOf(LIB_PCB), names: namesPresent(LIB_PCB, pcbNames) },
   };
+  const schLibComps = schLibComponentNames(LIB_SCH);
+  if (schLibComps.length) log('LIB COMPONENTS schlib all=[' + schLibComps.join(',') + ']');
   log('LIB BEFORE schlib target=' + LIB_SCH + ' bytes=' + before.sch.bytes + ' comps=[' + before.sch.names.join(',') + ']');
   log('LIB BEFORE pcblib target=' + LIB_PCB + ' bytes=' + before.pcb.bytes + ' comps=[' + before.pcb.names.join(',') + ']');
 
@@ -437,14 +510,19 @@ async function main() {
   // library untouched and fail with a clear instruction.
   let skipSchMerge = false;
   {
-    const schHasOld = namesPresent(LIB_SCH, [LCSC]).length > 0;
+    const schHasOld = namesPresent(LIB_SCH, Array.from(new Set([LCSC, previousName]))).length > 0;
     const schHasNew = namesPresent(LIB_SCH, [libName]).length > 0;
     if ((schHasOld || schHasNew) && !schCurrent) {
-      const others = before.sch.names.filter((n) => n && n !== LCSC && n !== libName);
+      // Prefer the complete header list; the registry may have missed components
+      // added to this library from Altium, and a rebuild rewrites the whole file.
+      const inventory = schLibComps.length ? schLibComps : before.sch.names;
+      const others = inventory.filter((n) => n && n !== LCSC && n !== libName && n !== previousName
+        && !BLANK_SCH_COMPONENT.test(n));
       if (others.length) {
         skipSchMerge = true;
         problems.push('target SchLib contains other components (' + others.join(',') + '); cannot auto-replace '
-          + libName + '. Delete it in Altium or use a new target SchLib path.');
+          + libName + (schFieldStale ? ' with the edited fields' : '')
+          + '. Delete it in Altium or use a new target SchLib path.');
       } else {
         const backup = LIB_SCH + '.bak-' + Date.now();
         try {
@@ -534,6 +612,16 @@ async function main() {
   if ((after.sch.names.length && !after.sch.names.includes(libName)) || (pkg && after.pcb.names.length && !after.pcb.names.includes(pkg))) {
     problems.push('merge self-check failed: the target library lost a component name it had before');
   }
+  // Header-level check: a repair rewrites the whole SchLib, so no unrelated
+  // component may disappear (the blank Component_N placeholder and the old
+  // Design Item ID after a rename are expected to go).
+  if (!skipSchMerge) {
+    const afterComps = schLibComponentNames(LIB_SCH);
+    const lost = schLibComps.filter((n) => afterComps.length > 0 && !afterComps.includes(n)
+      && !BLANK_SCH_COMPONENT.test(n)
+      && !(n === previousName && previousName !== libName));
+    if (lost.length) problems.push('merge self-check failed: the target SchLib lost components ' + lost.join(','));
+  }
 
   const skipped = (stage) => results.some((r) => r.stage === stage && /idempotent skip/.test(String(r.log)));
   function checkFile(label, file, floor) {
@@ -548,10 +636,7 @@ async function main() {
   const pcbSt = checkFile('PcbDoc', pcbDocPath, exportFloor);
   const schLibSt = skipSchMerge ? null : checkFile('SchLib', LIB_SCH, skipped('schlib') ? null : startedAt);
   const pcbLibSt = checkFile('PcbLib', LIB_PCB, skipped('pcblib') ? null : startedAt);
-  const fileHasText = (file, text) => {
-    const buf = fs.readFileSync(file);
-    return buf.includes(Buffer.from(text, 'latin1')) || buf.includes(Buffer.from(text, 'utf16le'));
-  };
+  const fileHasText = (file, text) => bufferHasText(fs.readFileSync(file), text);
   if (schSt) {
     const c = countDocumentRecords(fs.readFileSync(schDocPath));
     if (!c || c.pins !== wantPins) problems.push('SchDoc content: ' + JSON.stringify(c) + ' but model wants pins=' + wantPins);
@@ -666,6 +751,7 @@ async function main() {
     ok: true, lcsc: LCSC, outDir: OUT_DIR, schLib: LIB_SCH, pcbLib: LIB_PCB,
     componentDir: keepIntermediateDir ? componentDir : null,
     options: { keepDocs: KEEP_DOCS, makePartLibs: MAKE_PART_LIBS },
+    fields: effectiveFields,
     counts: { schPins: docModel.symbol.pins.length, pcbPads: docModel.footprint.pads.length },
     source: docSource,
     artifacts,

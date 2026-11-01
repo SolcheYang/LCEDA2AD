@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { designatorPrefix, schlibFields } from './component-fields.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCH_SHEET_TEMPLATE = path.join(ROOT, 'altium', 'blank-sch-sheet.txt');
@@ -49,12 +50,6 @@ function ascii(value) {
     .trim();
 }
 
-/** LCEDA reference prefix (head.c_para.pre, e.g. "R?", "U?"); U when absent. */
-function designatorPrefix(model) {
-  const letters = String((model && model.designatorPrefix) || '')
-    .toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
-  return letters || 'U';
-}
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 /** mil -> SchDoc 10-mil unit string. */
 function du(value) {
@@ -104,6 +99,7 @@ export function buildSchDoc(model) {
   const oy = SCH_ORIGIN.y;
   const pins = (model.symbol && model.symbol.pins) || [];
   const shapes = (model.symbol && model.symbol.shapes) || [];
+  const fields = schlibFields(model);
   const recs = [];
   let skippedShapes = 0;
   let indexInSheet = 1;
@@ -112,18 +108,18 @@ export function buildSchDoc(model) {
     '|RECORD=31|FONTIDCOUNT=4|SIZE1=10|FONTNAME1=Times New Roman|ITALIC1=F|UNDERLINE1=F|BOLD1=F|SIZE2=10|FONTNAME2=default|ITALIC2=F|UNDERLINE2=F|BOLD2=F|SIZE3=8|FONTNAME3=Times New Roman|ITALIC3=F|UNDERLINE3=F|BOLD3=F|SIZE4=8|FONTNAME4=Times New Roman|ITALIC4=F|UNDERLINE4=F|BOLD4=F|SHEETSTYLE=17|CUSTOMX=500|CUSTOMY=400|USECUSTOMSHEET=T|DISPLAY_UNIT=4');
   recs.push(sheet);
 
-  recs.push('|RECORD=1|LIBREFERENCE=' + ascii(model.mpn || model.lcsc)
-    + '|PARTCOUNT=1|COMPONENTDESCRIPTION=' + ascii(model.description || '')
+  recs.push('|RECORD=1|LIBREFERENCE=' + ascii(fields.designItemId)
+    + '|PARTCOUNT=1|COMPONENTDESCRIPTION=' + ascii(fields.description)
     + '|LOCATION.X=' + ox + '|LOCATION.Y=' + oy
     + '|CURRENTPARTID=1|ORIENTATION=0|SHOWHIDDENPINS=F|ISCROSSSHEETCONNECTOR=T|STYLE=0|ISMIRRORED=F');
 
   recs.push('|RECORD=34|COLOR=8388608|LOCATION.X=' + ox + '|LOCATION.Y=' + oy
     + '|OWNERINDEX=1|OWNERPARTID=-1|INDEXINSHEET=' + (indexInSheet++)
-    + '|FONTID=3|NAME=Designator|TEXT=' + designatorPrefix(model) + '??|SHOWNAME=F|ISHIDDEN=T|ORIENTATION=0|JUSTIFICATION=0');
+    + '|FONTID=3|NAME=Designator|TEXT=' + ascii(fields.designator) + '|SHOWNAME=F|ISHIDDEN=T|ORIENTATION=0|JUSTIFICATION=0');
 
   recs.push('|RECORD=41|COLOR=65280|LOCATION.X=' + ox + '|LOCATION.Y=' + oy
     + '|OWNERINDEX=1|OWNERPARTID=-1|INDEXINSHEET=' + (indexInSheet++)
-    + '|FONTID=2|NAME=Comment|TEXT=' + ascii(model.mpn || model.lcsc)
+    + '|FONTID=2|NAME=Comment|TEXT=' + ascii(fields.comment)
     + '|SHOWNAME=F|ISHIDDEN=T|ORIENTATION=0|JUSTIFICATION=6');
 
   for (const sh of shapes) {

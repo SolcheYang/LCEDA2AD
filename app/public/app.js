@@ -33,6 +33,9 @@ const el = {
   logCard: $('log-card'), logToggle: $('log-toggle'), progressEmpty: $('progress-empty'),
   previewMeta: $('preview-meta'), previewEmpty: $('preview-empty'),
   previewPanes: $('preview-panes'), previewSymbol: $('preview-symbol'), previewPcb: $('preview-pcb'),
+  previewFields: $('preview-fields'), fieldDescription: $('field-description'),
+  fieldDesignator: $('field-designator'), fieldComment: $('field-comment'),
+  fieldDesignItemId: $('field-designItemId'), fieldsReset: $('fields-reset'),
   artifacts: $('artifacts'),
   verChip: $('ver-chip'), updateModal: $('update-modal'), updateClose: $('update-close'),
   updateSub: $('update-sub'), updateNotes: $('update-notes'),
@@ -397,6 +400,36 @@ function selectCandidate(cand, row) {
 /* ─────────────── 预览：选中候选后显示符号（SchLib）与封装（PcbLib） ─────────────── */
 const PREVIEW_API = '/api/preview';
 let previewSeq = 0;
+// 当前元件在服务端算出的四个字段默认值；「恢复默认」回到这里。
+let previewFieldDefaults = null;
+
+const FIELD_INPUTS = {
+  description: () => el.fieldDescription,
+  designator: () => el.fieldDesignator,
+  comment: () => el.fieldComment,
+  designItemId: () => el.fieldDesignItemId,
+};
+
+function fillFields(values) {
+  previewFieldDefaults = values && typeof values === 'object' ? { ...values } : null;
+  for (const [key, getInput] of Object.entries(FIELD_INPUTS)) {
+    const input = getInput();
+    if (!input) continue;
+    input.value = previewFieldDefaults && typeof previewFieldDefaults[key] === 'string'
+      ? previewFieldDefaults[key] : '';
+  }
+}
+
+/** 页面上编辑后的四个字段；没有预览数据时返回 null（走服务端默认值）。 */
+function currentFields() {
+  if (!previewFieldDefaults) return null;
+  const fields = {};
+  for (const [key, getInput] of Object.entries(FIELD_INPUTS)) {
+    const input = getInput();
+    if (input) fields[key] = input.value;
+  }
+  return fields;
+}
 
 function previewNote(node, text) {
   node.innerHTML = '';
@@ -408,6 +441,7 @@ function previewNote(node, text) {
 
 function setPreviewMessage(text, isError) {
   el.previewPanes.hidden = true;
+  el.previewFields.hidden = true;
   el.previewEmpty.hidden = false;
   el.previewEmpty.className = 'preview-empty' + (isError ? ' error-state' : '');
   el.previewEmpty.textContent = text;
@@ -424,12 +458,21 @@ function renderPreview(data) {
   else previewNote(el.previewSymbol, '该元件没有符号数据');
   if (data.footprintSvg) el.previewPcb.innerHTML = data.footprintSvg;
   else previewNote(el.previewPcb, '该元件没有封装数据');
+  // Description / Designator / Comment / Design Item ID：预览即编辑。
+  if (data.fields && typeof data.fields === 'object') {
+    fillFields(data.fields);
+    el.previewFields.hidden = false;
+  } else {
+    fillFields(null);
+    el.previewFields.hidden = true;
+  }
 }
 
 async function loadPreview(lcsc) {
   const id = String(lcsc || '').trim();
   if (!id) return;
   const seq = ++previewSeq; // 连续点选不同候选时，只有最后一次的响应生效
+  previewFieldDefaults = null; // 新元件加载完成前不要沿用上一个元件的字段
   el.previewMeta.textContent = id;
   el.previewMeta.title = '';
   setPreviewMessage('正在加载 ' + id + ' 的符号与封装…', false);
@@ -474,6 +517,8 @@ async function doBuild() {
         pcbLib: el.pcbLib.value.trim(),
         keepDocs: !!(el.keepDocs && el.keepDocs.checked),
         makePartLibs: !!(el.makePartLibs && el.makePartLibs.checked),
+        // 预览里改过的 Description / Designator / Comment / Design Item ID
+        fields: currentFields(),
       }),
     });
     const data = await res.json();
@@ -929,6 +974,11 @@ document.addEventListener('keydown', (e) => {
 el.searchBtn.addEventListener('click', doSearch);
 el.q.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 el.buildBtn.addEventListener('click', doBuild);
+if (el.fieldsReset) {
+  el.fieldsReset.addEventListener('click', () => {
+    if (previewFieldDefaults) fillFields(previewFieldDefaults);
+  });
+}
 el.resetPaths.addEventListener('click', () => {
   setPaths(DEFAULTS);
   if (el.altiumExe) el.altiumExe.value = DEFAULTS.altiumExe;

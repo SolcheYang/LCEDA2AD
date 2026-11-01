@@ -132,6 +132,28 @@ body {
 .preview-canvas svg { width: 100%; height: 100%; display: block; }
 .preview-canvas .pv-note { margin: 0; color: var(--muted); font-size: 12px; }
 
+/* 元件字段：Description / Designator / Comment / Design Item ID（预览即编辑） */
+.preview-fields {
+  flex: none; display: flex; flex-direction: column; gap: 8px;
+  padding-top: 10px; border-top: 1px dashed var(--line);
+}
+.preview-fields[hidden] { display: none; }
+.pf-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+.pf-head .hint { font-size: 11px; }
+.pf-head button.link { padding: 2px 4px; font-size: 12px; }
+.pf-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 11px; color: var(--muted); }
+.pf-field > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-field input, .pf-field textarea {
+  width: 100%; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 6px;
+  font: 12px var(--mono); color: var(--ink); background: #fff;
+}
+.pf-field textarea { min-height: 38px; max-height: 96px; line-height: 1.45; resize: vertical; }
+.pf-field input:focus, .pf-field textarea:focus {
+  outline: 2px solid rgba(37, 99, 235, .25); border-color: var(--brand);
+}
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+
 .card {
   background: var(--card);
   border: 1px solid var(--line);

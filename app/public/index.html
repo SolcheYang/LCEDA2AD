@@ -131,6 +131,30 @@
               <div id="preview-pcb" class="preview-canvas"></div>
             </div>
           </div>
+          <div id="preview-fields" class="preview-fields" hidden>
+            <div class="pf-head">
+              <span>元件字段 <span class="hint">（写入 SchLib，可直接修改）</span></span>
+              <button id="fields-reset" class="link" type="button">恢复默认</button>
+            </div>
+            <label class="pf-field pf-desc">
+              <span>Description · 描述</span>
+              <textarea id="field-description" rows="2" spellcheck="false"></textarea>
+            </label>
+            <div class="pf-grid">
+              <label class="pf-field">
+                <span>Designator · 位号</span>
+                <input id="field-designator" type="text" spellcheck="false" placeholder="R??">
+              </label>
+              <label class="pf-field">
+                <span>Comment · 注释</span>
+                <input id="field-comment" type="text" spellcheck="false">
+              </label>
+              <label class="pf-field">
+                <span>Design Item ID · 器件 ID</span>
+                <input id="field-designItemId" type="text" spellcheck="false">
+              </label>
+            </div>
+          </div>
         </div>
       </section>
 
