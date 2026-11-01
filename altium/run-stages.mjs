@@ -233,6 +233,9 @@ async function runAltiumStage(stage, model, outDirOverride, options = {}) {
     forcePcbLib: options.forcePcbLib === true,
     schLibCurrent: options.schLibCurrent === true,
     pcbLibCurrent: options.pcbLibCurrent === true,
+    // SchLib replacement removes only the same-named component(s) before redraw.
+    replaceExisting: options.replaceExisting === true,
+    previousName: options.previousName || '',
   });
   const startupMs = Number(process.env.ALTIUM_STARTUP_MS || 180000);
   const res = await runAltiumJob(job, {
@@ -478,40 +481,25 @@ async function main() {
       : 'PCB STALE: ' + pkg + ' predates ' + LIB_MARKER_PCB + '; it will be removed and redrawn');
   }
 
-  // The SchLib API has no usable RemoveComponent. If the target already contains
-  // this part but it predates the current geometry marker, replace the file only
-  // when the registry says this is the sole component; otherwise leave the user's
-  // library untouched and fail with a clear instruction.
-  let skipSchMerge = false;
-  {
-    const schHasOld = namesPresent(LIB_SCH, Array.from(new Set([LCSC, previousName]))).length > 0;
-    const schHasNew = namesPresent(LIB_SCH, [libName]).length > 0;
-    if ((schHasOld || schHasNew) && !schCurrent) {
-      log(OVERWRITE
-        ? 'SCHLIB OVERWRITE: ' + libName + ' exists in the target library; the file will be replaced (UI choice)'
-        : 'SCHLIB repair: ' + libName + ' is stale or its fields changed; the file will be replaced');
-      // Prefer the complete header list; the registry may have missed components
-      // added to this library from Altium, and a rebuild rewrites the whole file.
-      const inventory = schLibComps.length ? schLibComps : before.sch.names;
-      const others = inventory.filter((n) => n && n !== LCSC && n !== libName && n !== previousName
-        && !BLANK_SCH_COMPONENT.test(n));
-      if (others.length) {
-        skipSchMerge = true;
-        problems.push('target SchLib contains other components (' + others.join(',') + '); cannot auto-replace '
-          + libName + (schFieldStale ? ' with the edited fields' : '')
-          + '. Delete it in Altium or use a new target SchLib path.');
-      } else {
-        const backup = LIB_SCH + '.bak-' + Date.now();
-        try {
-          fs.renameSync(LIB_SCH, backup);
-          log('SCHLIB repair: old target moved to ' + backup);
-          log('SCHLIB repair: the target will be recreated with the current pins/border geometry');
-        } catch (err) {
-          skipSchMerge = true;
-          problems.push('target SchLib is locked (' + err.message + '); close that document in Altium '
-            + '(Altium itself can stay open) and retry.');
-        }
-      }
+  // When the target already contains this part but it predates the current
+  // marker (or the user chose overwrite, or fields changed), remove ONLY the
+  // same-named component(s) inside Altium and redraw it. The rest of the target
+  // library is never rewritten or renamed. The script receives the candidate
+  // names (new Design Item ID, old one, LCSC) and calls RemoveSchComponent.
+  const schHasOld = namesPresent(LIB_SCH, Array.from(new Set([LCSC, previousName]))).length > 0;
+  const schHasNew = namesPresent(LIB_SCH, [libName]).length > 0;
+  const schNeedsReplace = (schHasOld || schHasNew) && !schCurrent;
+  if (schNeedsReplace) {
+    log(OVERWRITE
+      ? 'SCHLIB OVERWRITE: ' + libName + ' exists; removing only the same-named component(s), other components stay'
+      : 'SCHLIB REPLACE: ' + libName + ' is stale or its fields changed; removing only the same-named component(s)');
+    // Keep a file-level backup next to the target; Altium also writes History/Lib.
+    const backup = LIB_SCH + '.bak-' + Date.now();
+    try {
+      fs.copyFileSync(LIB_SCH, backup);
+      log('SCHLIB backup: ' + backup);
+    } catch (err) {
+      log('SCHLIB backup failed (continuing): ' + err.message);
     }
   }
 
@@ -524,10 +512,6 @@ async function main() {
   for (const stage of STAGES) {
     if (failedStage) break;
     if (cancelRequested()) fail('cancelled from the UI', 4);
-    if (stage === 'schlib' && skipSchMerge) {
-      log('SKIP schlib: target SchLib cannot be replaced safely (see PROBLEM below)');
-      continue;
-    }
     const isPartStage = stage === 'pcblib_part' || stage === 'schlib_part';
     const stageOut = isPartStage ? componentDir : OUT_DIR;
     fs.mkdirSync(stageOut, { recursive: true });
@@ -535,6 +519,8 @@ async function main() {
       schLibCurrent: schCurrent,
       pcbLibCurrent: pcbCurrent,
       forcePcbLib: stage === 'pcblib' && forceStalePcb,
+      replaceExisting: stage === 'schlib' && schNeedsReplace,
+      previousName,
     });
     results.push(res);
     if (!res.ok) failedStage = stage;
@@ -576,7 +562,7 @@ async function main() {
   registry[LIB_SCH] = after.sch.names;
   registry[LIB_PCB] = after.pcb.names;
   const schStage = results.find((r) => r.stage === 'schlib');
-  if (!skipSchMerge && schStage && schStage.ok && namesPresent(LIB_SCH, [libName]).length) {
+  if (schStage && schStage.ok && namesPresent(LIB_SCH, [libName]).length) {
     versions[LIB_SCH] = LIB_MARKER_SCH;
   }
   const pcbStages = results.filter((r) => r.stage === 'pcblib');
@@ -590,15 +576,17 @@ async function main() {
   if ((after.sch.names.length && !after.sch.names.includes(libName)) || (pkg && after.pcb.names.length && !after.pcb.names.includes(pkg))) {
     problems.push('merge self-check failed: the target library lost a component name it had before');
   }
-  // Header-level check: a repair rewrites the whole SchLib, so no unrelated
-  // component may disappear (the blank Component_N placeholder and the old
-  // Design Item ID after a rename are expected to go).
-  if (!skipSchMerge) {
+  // Header-level safety check: the only components allowed to disappear are the
+  // same-named ones being replaced (new/old Design Item ID or LCSC) plus the
+  // blank Component_N placeholder. Any other loss fails the job.
+  {
     const afterComps = schLibComponentNames(LIB_SCH);
+    const replaceable = new Set([libName, previousName, LCSC].filter(Boolean)
+      .map((n) => String(n).toLowerCase()));
     const lost = schLibComps.filter((n) => afterComps.length > 0 && !afterComps.includes(n)
       && !BLANK_SCH_COMPONENT.test(n)
-      && !(n === previousName && previousName !== libName));
-    if (lost.length) problems.push('merge self-check failed: the target SchLib lost components ' + lost.join(','));
+      && !replaceable.has(String(n).toLowerCase()));
+    if (lost.length) problems.push('merge self-check failed: the target SchLib lost unrelated components ' + lost.join(','));
   }
 
   const skipped = (stage) => results.some((r) => r.stage === stage && /idempotent skip/.test(String(r.log)));
@@ -612,7 +600,7 @@ async function main() {
   const exportFloor = startedAt - 3600 * 1000;
   const schSt = checkFile('SchDoc', schDocPath, exportFloor);
   const pcbSt = checkFile('PcbDoc', pcbDocPath, exportFloor);
-  const schLibSt = skipSchMerge ? null : checkFile('SchLib', LIB_SCH, skipped('schlib') ? null : startedAt);
+  const schLibSt = checkFile('SchLib', LIB_SCH, skipped('schlib') ? null : startedAt);
   const pcbLibSt = checkFile('PcbLib', LIB_PCB, skipped('pcblib') ? null : startedAt);
   const fileHasText = (file, text) => bufferHasText(fs.readFileSync(file), text);
   if (schSt) {
@@ -632,7 +620,6 @@ async function main() {
   if (schLibSt && !fileHasText(LIB_SCH, libName)) problems.push('SchLib: libref ' + libName + ' not found in the saved library');
 
   for (const stage of ['schlib', 'pcblib']) {
-    if (stage === 'schlib' && skipSchMerge) continue;
     const r = results.find((x) => x.stage === stage);
     const line = r ? String(r.log).split(/\r?\n/).find((l) => new RegExp('^COUNT ' + stage).test(l)) : null;
     if (!line) { problems.push(stage + ': no COUNT line'); continue; }

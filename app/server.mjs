@@ -1117,17 +1117,10 @@ function buildDuplicateReport(lcsc, paths, fields, model) {
   const matches = inventory.length ? inventory.filter((n) => schCandidates.includes(n)) : byteMatches;
   const schDuplicate = matches.length > 0;
   const others = inventory.filter((n) => n && !schCandidates.includes(n) && !BLANK_SCH_COMPONENT.test(n));
-  // The SchLib scripting API cannot remove a single component; replacing the
-  // whole file is safe only when this part is the library's sole component.
-  const schCanOverwrite = !schDuplicate || (inventory.length > 0 && others.length === 0);
-  let schReason = '';
-  if (schDuplicate && !schCanOverwrite) {
-    schReason = inventory.length
-      ? '该 SchLib 还包含其它元件（' + others.join(', ') + '），Altium 脚本无法只删除一个元件；'
-        + '请先在 Altium 里删除 ' + libName + ' 后重试，或换一个 SchLib。'
-      : '无法读取该 SchLib 的元件清单（文件可能损坏或正被 Altium 占用），不能安全覆盖；'
-        + '请关闭 Altium 后重试，或换一个 SchLib。';
-  }
+  // The SchLib emitter removes only the same-named component(s) via
+  // ISch_Lib.RemoveSchComponent, so a multi-component library is safe to update.
+  const schCanOverwrite = true;
+  const schReason = '';
 
   const pkg = String(model.package || lcsc).trim();
   const pcbExists = fs.existsSync(paths.pcbLib);

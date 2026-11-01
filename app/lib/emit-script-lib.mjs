@@ -578,6 +578,11 @@ export async function emitScriptJob(model, opts = {}) {
     LCSC: pasEsc(lcsc),
     MPN: pasEsc(model.mpn || ''),
     LIBNAME: pasEsc(libName),
+    // WideString literals for the remove-by-reference helper: a Design Item ID
+    // may be Chinese, and pasEsc() would strip it before Altium compiles the .pas.
+    LCSC_W: quoteWide(lcsc),
+    LIBNAME_W: quoteWide(libName),
+    PREVNAME_W: quoteWide(opts.previousName || ''),
     LIB_MARKER: pasEsc(LIB_MARKER),
     PACKAGE: pasEsc(pkg),
     DESCRIPTION: quoteWide(model.description || ''),
@@ -606,7 +611,12 @@ export async function emitScriptJob(model, opts = {}) {
     REGION_OUTLINE: String(outlineRegionCount),
     REGION_SKIPPED: String(skippedRegionCount),
     SCHLIB_EXISTS: flags.schLibExists ? 'True' : 'False',
-    SCHLIB_HAS: (opts.schLibCurrent === true ? true : flags.schLibHasComp) ? 'True' : 'False',
+    // A replacement must not take the idempotent-skip branch: the script removes
+    // the same-named component(s) first, then adds the redrawn one.
+    SCHLIB_REPLACE: opts.replaceExisting === true ? 'True' : 'False',
+    SCHLIB_HAS: opts.replaceExisting === true
+      ? 'False'
+      : ((opts.schLibCurrent === true ? true : flags.schLibHasComp) ? 'True' : 'False'),
     PCBLIB_EXISTS: flags.pcbLibExists ? 'True' : 'False',
     PCBLIB_HAS: (opts.forcePcbLib === true ? false : (opts.pcbLibCurrent === true || flags.pcbLibHasComp)) ? 'True' : 'False',
     PCBLIB_FORCE: opts.forcePcbLib === true ? 'True' : 'False',

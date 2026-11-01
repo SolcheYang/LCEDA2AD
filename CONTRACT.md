@@ -140,14 +140,15 @@ HTTP（仅 localhost，端口 43180，可用 PORT 覆盖）：
   参数必须是 C 编号；按名称搜索请先走 `/api/search`。）
 - `POST /api/check-duplicate` body `{ query, schLib, pcbLib, fields? }` → `{ ok:true, lcsc, hasDuplicate, schlib, pcblib }`
   （生成前检查目标库是否已有同名元件。`schlib.inventory` 来自 SchLib 头部 `LibRefN=`，`matches` 命中
-  本次要写入的 Design Item ID / 默认 ID / LCSC；`canOverwrite:false` 表示目标 SchLib 还含其它元件、
-  Altium 脚本无法只删除一个，只能终止或手动处理。`pcblib` 按封装名做字节扫描。）
+  本次要写入的 Design Item ID / 默认 ID / LCSC；`canOverwrite` 现在恒为 true：SchLib 覆盖由脚本
+  `ISch_Lib.RemoveSchComponent` 只删除同名元件，再重画，其它元件不动。`pcblib` 按封装名做字节扫描。）
 - `POST /api/build` body `{ query, outDir, schLib, pcbLib, keepDocs?, makePartLibs?, fields?, overwrite? }` → `{ ok:true, jobId }`（异步执行）
   `fields` 可选，`{ description?, designator?, comment?, designItemId? }` 覆盖预览里的四个字段；
   服务端只接受这四个键、单行化并限长（description 4000，其余 200），再以 `COMPONENT_FIELDS` JSON
   环境变量传给管线。`overwrite:true`（用户在重复对话框选择「覆盖」）会以 `OVERWRITE=1` 传给管线，
-  强制重画目标库中已有的同名元件；缺省时保持幂等跳过。已存在的 SchLib 元件无法原地修改：字段有实际
-  变化或选择覆盖时会走与旧几何相同的重建路径（仅当该 SchLib 里只有这一个元件），否则给出明确的 PROBLEM 提示。
+  强制重画目标库中已有的同名元件；缺省时保持幂等跳过。字段有实际变化或选择覆盖时，SchLib 脚本只删除
+  同名元件（新/旧 Design Item ID、LCSC 三种候选）后重画，不重建整库；保存后管线校验头部，除同名元件和
+  空白占位外任何组件消失都会判失败。PcbLib 只删除同名封装后重画。
 - `POST /api/job/cancel` body `{ id }` → `{ ok:true, jobId, state, cancelled }`
   （界面「重置」使用：终止该作业的管线进程树并清掉 activeJobId；非运行中的作业返回 `cancelled:false`。）
 - `POST /api/pick-path` body `{ mode:"folder"|"schlib"|"pcblib", current? }` → `{ ok:true, path }`

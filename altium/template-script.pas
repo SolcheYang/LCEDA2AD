@@ -288,6 +288,44 @@ Begin
     W('OK schlib_part wrote the single-part library');
 End;
 
+{ Remove every library component whose LibReference (or Design Item ID) matches
+  RefName. Deleting during iteration invalidates the iterator, so re-create it
+  for each match and remove one component per pass. Only the matching symbols
+  are removed; the rest of the target library stays untouched. }
+Procedure RemoveComponentByRef(Lib : ISch_Lib; Const RefName : WideString);
+Var
+    Iter  : ISch_Iterator;
+    C     : ISch_Component;
+    Found : Boolean;
+Begin
+    If RefName = '' Then Exit;
+    Found := True;
+    While Found Do
+    Begin
+        Found := False;
+        C := nil;
+        Iter := Lib.SchLibIterator_Create;
+        If Not Assigned(Iter) Then Exit;
+        Iter.AddFilter_ObjectSet(MkSet(eSchComponent));
+        C := Iter.FirstSchObject;
+        While Assigned(C) Do
+        Begin
+            If (CompareText(C.LibReference, RefName) = 0) Or (CompareText(C.DesignItemID, RefName) = 0) Then
+            Begin
+                Found := True;
+                Break;
+            End;
+            C := Iter.NextSchObject;
+        End;
+        Lib.SchIterator_Destroy(Iter);
+        If Found And Assigned(C) Then
+        Begin
+            W('OK schlib removing the existing same-named component');
+            Lib.RemoveSchComponent(C);
+        End;
+    End;
+End;
+
 Procedure StepSchLib;
 Var
     Doc  : IServerDocument;
@@ -308,6 +346,13 @@ Begin
     Lib := SchServer.GetCurrentSchDocument;
     If Not Assigned(Lib) Then
     Begin W('ERR schlib no current library'); Exit; End;
+    If %%SCHLIB_REPLACE%% Then
+    Begin
+        W('STEP schlib replace: removing only the same-named component(s)');
+        RemoveComponentByRef(Lib, %%LIBNAME_W%%);
+        RemoveComponentByRef(Lib, %%PREVNAME_W%%);
+        RemoveComponentByRef(Lib, %%LCSC_W%%);
+    End;
     If %%SCHLIB_HAS%% Then
     Begin
         SchComps := 1;

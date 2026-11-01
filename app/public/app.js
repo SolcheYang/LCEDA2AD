@@ -570,7 +570,7 @@ function renderDuplicateList(report) {
       ok.className = 'dup-ok';
       ok.textContent = title.indexOf('PcbLib') >= 0
         ? '将删除旧封装并重画。'
-        : '将备份该库并重建（仅当库里只有这个元件时安全）。';
+        : '将只删除同名元件并重画，库里其它元件不动。';
       wrap.appendChild(ok);
     }
     return wrap;
@@ -584,8 +584,8 @@ function renderDuplicateList(report) {
   el.dupOverwrite.title = blocked ? '目标 SchLib 不能安全覆盖，见下方说明' : '';
   el.dupHint.className = blocked ? 'error' : 'hint';
   el.dupHint.textContent = blocked
-    ? '「覆盖」不可用：目标 SchLib 里还有其它元件，Altium 脚本无法只删除一个。请先在 Altium 里手动删除该元件，或换一个 SchLib。'
-    : '「覆盖」会重画目标库中的同名元件；「终止」不会写入任何文件。';
+    ? '「覆盖」不可用：请先在 Altium 里手动处理该元件，或换一个库。'
+    : '「覆盖」只会删除目标库里的同名元件并重画，其它元件不动；「终止」不会写入任何文件。';
 }
 
 function closeDuplicateModal() {
