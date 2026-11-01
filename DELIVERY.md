@@ -21,6 +21,7 @@
 | AD Make Schematic Library / Make PCB Library | 改为**脚本 API 等价转换**：在 Altium 内创建库组件，不调用菜单、不点击 | 生成的 job.pas 通过静态校验；几何与数据层 30/30 一致 |
 | 并入指定 SchLib/PcbLib | 目标库不存在则新建；同名幂等跳过；追加后校验名称 | 已真机复验：新库创建、追加、幂等、旧空库自动修复均 PASS |
 | SchLib Description / Value | Description 取 EasyEDA `result.description`；Value 取 `c_para.Value`，有值则新建可见 `Value` 参数 | C25804：`10KΩ (1002) ±1%` / `10kΩ`（可见）；C92116 接口返回空描述/无 Value |
+| SchLib 立创编号参数 | 生成的 SchLib 组件固定带一个隐藏 `立创编号` 参数，值 = 输入的 LCSC 编号（v15 起） | 生成的 `job.pas` 含 `AddParameter(Target, '立创编号', 'C25804', True, ...)`；GBK 编码与 `validatePas` 校验通过 |
 | SchLib 四字段预览与修改 | 预览页显示并可编辑 Description / Designator / Comment / Design Item ID（`/api/preview` 返回 `fields`，`/api/build` 接收 `fields`，管线以 `COMPONENT_FIELDS` 传入）；SchDoc 与 SchLib 共用同一套默认值 | `app/lib/component-fields.mjs`；`schlibFields()` 在预览、文档与库发射器中共用 |
 | Pin Name / Value 位置 | Designator=Name 时隐藏 Name；Value 放符号右下角、右下对齐、只显示值 | C25804 引脚 1/2 已验证；C92116 的 Name 与 Designator 不同，保持可见 |
 | 可选中间产物 | 页面勾选保留 SchDoc/PcbDoc、生成单件 SchLib/PcbLib；保存到 `<outDir>\<元件名>\`；其他中间文件清理 | C25804 临时库验证；默认关闭时 out 为空 |

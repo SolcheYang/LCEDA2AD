@@ -18,7 +18,7 @@ import { schlibFields } from './component-fields.mjs';
 
 const DEFAULT_ALTIUM_EXE = 'E:\\AD\\AD\\X2.EXE';
 const KNOWN_STEPS = ['schlib_part', 'schlib', 'pcblib_part', 'pcblib'];
-// Bump these whenever the generated library geometry changes. The pipeline records
+// Bump these whenever the generated library geometry or metadata changes. The pipeline records
 // them per target library in jobs/_lib-registry.json, so it can tell a component
 // written by an older emitter from a current one and redraw instead of skipping.
 // They are independent: a PcbLib-only change must not invalidate every SchLib.
@@ -32,9 +32,11 @@ const KNOWN_STEPS = ['schlib_part', 'schlib', 'pcblib_part', 'pcblib'];
 // rotation, NPTH mounting holes, silk arcs/rectangles, bottom silk no longer
 // lands on bottom copper. v14 (PCB): Mechanical 8 carries only a small pin-1
 // orientation dot - the filled layer-99 body shapes and every other
-// component_shape primitive are no longer drawn.
+// component_shape primitive are no longer drawn. v15 (SCH): every generated
+// SchLib component also carries a hidden "立创编号" parameter holding its LCSC
+// number, so a SchLib written by an older emitter must be redrawn.
 const PIN_SUFFIX = '-p' + (process.env.PIN_LENGTH_MIL || 150);
-export const LIB_MARKER_SCH = 'LCEDA2AD-v11' + PIN_SUFFIX;
+export const LIB_MARKER_SCH = 'LCEDA2AD-v15' + PIN_SUFFIX;
 export const LIB_MARKER_PCB = 'LCEDA2AD-v14' + PIN_SUFFIX;
 // Kept for callers that predate the split; it tracks the PCB library.
 export const LIB_MARKER = LIB_MARKER_PCB;
@@ -237,13 +239,22 @@ export function buildSymbolBody(model, lcsc) {
   out.push('    Target.Comment.Text         := ' + quoteWide(fields.comment) + ';');
   out.push("    W('BS commenthidden');");
   out.push('    Target.Comment.IsHidden     := True;');
+  const bbox = symbolBBox(sym.shapes, sym.pins);
+  const valueX = Math.round(bbox.maxX + VALUE_MARGIN_MIL);
+  const valueY = Math.round(bbox.minY - VALUE_MARGIN_MIL);
   const value = String(model.value || '').trim();
   if (value) {
-    const bbox = symbolBBox(sym.shapes, sym.pins);
-    const valueX = Math.round(bbox.maxX + VALUE_MARGIN_MIL);
-    const valueY = Math.round(bbox.minY - VALUE_MARGIN_MIL);
     out.push("    W('BS valueparam " + valueX + "," + valueY + "');");
     out.push("    AddParameter(Target, 'Value', " + quoteWide(value) + ', False, ' + valueX + ', ' + valueY + ');');
+  }
+  // The LCSC number is metadata, not a visible field: keep it as a hidden
+  // parameter so it appears in the Parameters pane (and BOM exports) without
+  // painting extra text on the symbol.
+  const lcscText = String(lcsc || model.lcsc || '').trim();
+  if (lcscText) {
+    const lcscY = valueY - VALUE_MARGIN_MIL;
+    out.push("    W('BS lcscparam " + valueX + "," + lcscY + "');");
+    out.push("    AddParameter(Target, '立创编号', " + quoteWide(lcscText) + ', True, ' + valueX + ', ' + lcscY + ');');
   }
   for (const sh of sym.shapes || []) {
     const kind = String(sh.kind || '').toLowerCase();

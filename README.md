@@ -317,6 +317,14 @@ jobs\_lib-registry.json            内部版本登记表
     朝远离焊盘外接框中心的方向，用于在封装里识别 1 脚；
   - Mechanical 6 的 2 mil 元件外框保持不变；
   - 目标库里 v13 及更早写入的同名封装会按版本号自动删除并重画。
+- **v15 SchLib 立创编号参数**（`LCEDA2AD-v15-p150`）：
+  - 生成的 SchLib 组件在 Parameters 里固定多一栏 `立创编号`，值为输入的 LCSC
+    编号（如 `C25804`）；默认隐藏（`IsHidden=True`），不占符号显示区域，但会出现在
+    Altium 的 Parameters 面板并参与 BOM。
+  - 该参数与四个可编辑字段无关，始终由 `model.lcsc` 写入；`Value` 参数仍按原规则
+    仅在有值时生成。
+  - SchLib 版本标记升到 `LCEDA2AD-v15`（PcbLib 保持 `v14`）；已有同名组件的处理
+    规则不变：单组件库自动备份重建，多组件库需手动删除该组件或换用新库路径。
 - **直写目标库**：目标 `pcblib` / `schlib` 两阶段始终执行；`pcblib_part` /
   `schlib_part` 仅在勾选「生成单件库」时执行，写入 `<outDir>\<元件名>\`。
 - **可选中间产物**：UI 勾选 `KEEP_DOCS` / `MAKE_PART_LIBS` 控制是否保留
@@ -335,7 +343,8 @@ jobs\_lib-registry.json            内部版本登记表
   闭合多边形处理）。椭圆弧按 10° 采样成折线；符号文本框（`T`）仍未重建（探测样本
   未出现该记录）。未知的模型图形会记入日志的 `skippedShapes=N`。
 - 符号参数（SchDoc 的 `RECORD=41`，如 SupplierPart、Datasheet）没有重建；
-  库组件保留 LibReference、描述、Designator、引脚和图形。
+  库组件保留 LibReference、描述、Designator、引脚和图形。SchLib 组件固定注入一个
+  隐藏的 `立创编号` 参数（值 = LCSC 编号，v15 起）；除此之外 EasyEDA 自带的参数仍未重建。
 - 封装重建**除 99/101 外的每个 EasyEDA 层**：焊盘（含旋转、NPTH 孔、钢网/阻焊扩边）、
   丝印线/圆弧/矩形、阻焊/钢网层、Multi 层图形，以及制造层 `SOLIDREGION` 填充多边形。
   层映射：1→Top、2→Bottom、3→TopOverlay、4→BottomOverlay、5→TopPaste、6→BottomPaste、

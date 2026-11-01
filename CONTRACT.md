@@ -62,6 +62,8 @@
   缺省时：`designator = <designatorPrefix>??`、`comment = designItemId = mpn`（mpn 为空时用 lcsc）。
   `designator` / `designItemId` 为空串时回退默认值；`comment` / `description` 允许空串。
   统一由 `app/lib/component-fields.mjs` 的 `schlibFields(model)` 计算，预览、SchDoc、SchLib、PcbLib 共用。
+- SchLib 组件固定写入一个隐藏参数 `立创编号`，值为 `lcsc`（C 编号）；它不属于上述四个可编辑字段，
+  也不影响符号几何与显示（`IsHidden=True`，可在 Altium 的 Parameters 面板和 BOM 中看到）。
 - `shape` ∈ {round,rect,octagonal}；`layer` ∈ {top,bottom,multi,top_overlay,bottom_overlay,top_paste,bottom_paste,top_solder,bottom_solder,board_outline,document,top_assembly,bottom_assembly,mechanical,component_shape,lead_shape,component_marking}；`hole` = 孔径 mm，0=SMD（通孔件 `layer:"multi"` 且 hole>0）。
   层名对应 EasyEDA 标准层：1 top / 2 bottom / 3 top_overlay / 4 bottom_overlay / 5 top_paste / 6 bottom_paste / 7 top_solder / 8 bottom_solder / 10 board_outline / 11 multi / 12 document / 13 top_assembly / 14 bottom_assembly / 15 mechanical / 99 component_shape / 100 lead_shape / 101 component_marking。
 - `rotation` = 焊盘旋转角（度，0–360）；`plated` 缺省为 `true`，`false` = 非金属化机械孔（NPTH，通常 `number:""`、`w=h=hole`）。EasyEDA 的 `HOLE` 记录归一化为这种 pad。
