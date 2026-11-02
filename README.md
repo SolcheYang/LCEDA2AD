@@ -246,8 +246,8 @@ jobs\_lib-registry.json            内部版本登记表
     （`IsHidden=False`）；无 Value 的元件不加。
   - 依赖 `iconv-lite` 做 UTF-8→GBK 转码。
 - **v7 Pin Name / Value 位置（Value 位置已被 v8 修正）**：
-  - Pin：`If Num = PName Then Pin.ShowName := False`；Designator 与 Name 相同时
-    只显示 Designator，避免同一文字出现两次。
+  - Pin：Designator 与 Name 相同时只显示 Designator，避免同一文字出现两次
+    （v16 起该判断移到发射器，并扩展为重名引脚只显示一次）。
   - Value：v7 放在符号 bbox 的右下角（`maxX, minY`），
     `P.Justification := eJustify_BottomRight`；v8 起改为下方的包围盒 + TopLeft。
   - 版本 `LCEDA2AD-v7-p150`（v8 为 `LCEDA2AD-v8-p150`）。
@@ -326,6 +326,14 @@ jobs\_lib-registry.json            内部版本登记表
     仅在有值时生成。
   - SchLib 版本标记升到 `LCEDA2AD-v15`（PcbLib 保持 `v14`）；已有同名组件的处理
     规则不变：单组件库自动备份重建，多组件库需手动删除该组件或换用新库路径。
+- **v16 SchLib 重名引脚隐藏 Name**（`LCEDA2AD-v16-p150`）：
+  - 多个引脚使用同一个 Name 时（如多个 `NC` / `PGND` / `VAC`），只有第一个引脚显示
+    Name，后续同名引脚的 `ShowName` 设为 `False`，避免同一文字在符号上重复（引脚位置
+    重叠时文字也会互相压住）；引脚编号（Designator）始终显示。
+  - 判断在发射器中完成，`AddPin` 新增 `PShowName` 参数；Name 与 Designator 相同
+    仍然隐藏 Name。
+  - SchLib 版本标记升到 `LCEDA2AD-v16`（PcbLib 保持 `v14`），已有同名组件按版本
+    规则自动替换重画。
 - **直写目标库**：目标 `pcblib` / `schlib` 两阶段始终执行；`pcblib_part` /
   `schlib_part` 仅在勾选「生成单件库」时执行，写入 `<outDir>\<元件名>\`。
 - **可选中间产物**：UI 勾选 `KEEP_DOCS` / `MAKE_PART_LIBS` 控制是否保留

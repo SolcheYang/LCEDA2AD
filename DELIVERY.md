@@ -26,6 +26,7 @@
 | SchLib 立创编号参数 | 生成的 SchLib 组件固定带一个隐藏 `立创编号` 参数，值 = 输入的 LCSC 编号（v15 起） | 生成的 `job.pas` 含 `AddParameter(Target, '立创编号', 'C25804', True, ...)`；GBK 编码与 `validatePas` 校验通过 |
 | SchLib 四字段预览与修改 | 预览页显示并可编辑 Description / Designator / Comment / Design Item ID（`/api/preview` 返回 `fields`，`/api/build` 接收 `fields`，管线以 `COMPONENT_FIELDS` 传入）；SchDoc 与 SchLib 共用同一套默认值 | `app/lib/component-fields.mjs`；`schlibFields()` 在预览、文档与库发射器中共用 |
 | Pin Name / Value 位置 | Designator=Name 时隐藏 Name；Value 放符号右下角、右下对齐、只显示值 | C25804 引脚 1/2 已验证；C92116 的 Name 与 Designator 不同，保持可见 |
+| 重名引脚隐藏 Name | 多个引脚共用同一个 Name 时只让第一个显示，后续同名引脚 `ShowName=False`，避免文字重复/重叠（v16 起）；Designator 始终显示 | 发射器计算 `PShowName`；C19272232 实测 `NC`/`PGND`/`VAC` 仅首个可见 |
 | 可选中间产物 | 页面勾选保留 SchDoc/PcbDoc、生成单件 SchLib/PcbLib；保存到 `<outDir>\<元件名>\`；其他中间文件清理 | C25804 临时库验证；默认关闭时 out 为空 |
 | 常用路径 / 浏览 | outDir、schLib、pcbLib 三个路径都有常用下拉（保存到 state 目录 `ui-prefs.json`，关闭程序后仍保留；保存当前 / 删除）与 Windows 原生选择框；库文件可选已有或新建 | UI + `GET/POST /api/prefs` + `POST /api/pick-path` |
 | 工程在 E: | `E:\EDA2Altium` | — |

@@ -64,7 +64,7 @@ Begin
     RunProcess('WorkspaceManager:SaveObject');
 End;
 
-Procedure AddPin(Target : ISch_Component; Num, PName : String; PX, PY, PLen, POrient : Integer; PElec : String);
+Procedure AddPin(Target : ISch_Component; Num, PName : String; PX, PY, PLen, POrient : Integer; PElec : String; PShowName : Boolean);
 Var
     Pin : ISch_Pin;
     Rot : TRotationBy90;
@@ -86,9 +86,10 @@ Begin
     Else Pin.Electrical := eElectricPassive;
     Pin.OwnerPartId := 1;
     Pin.OwnerPartDisplayMode := 0;
-    { When the pin name and designator are identical, showing both just prints the
-      same text twice; keep the designator and hide the name. }
-    If Num = PName Then Pin.ShowName := False Else Pin.ShowName := True;
+    { Visibility is decided by the emitter: hidden when the name equals the
+      designator (same text twice) and when an earlier pin already shows the same
+      name (two pins sharing a name paint overlapping text). }
+    Pin.ShowName := PShowName;
     Target.AddSchObject(Pin);
 End;
 
