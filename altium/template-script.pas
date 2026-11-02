@@ -87,8 +87,8 @@ Begin
     Pin.OwnerPartId := 1;
     Pin.OwnerPartDisplayMode := 0;
     { Visibility is decided by the emitter: hidden when the name equals the
-      designator (same text twice) and when an earlier pin already shows the same
-      name (two pins sharing a name paint overlapping text). }
+      designator (same text twice) and when several pins share a name (all of
+      them hide it, because duplicate names paint overlapping text). }
     Pin.ShowName := PShowName;
     Target.AddSchObject(Pin);
 End;

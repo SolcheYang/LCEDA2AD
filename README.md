@@ -327,9 +327,10 @@ jobs\_lib-registry.json            内部版本登记表
   - SchLib 版本标记升到 `LCEDA2AD-v15`（PcbLib 保持 `v14`）；已有同名组件的处理
     规则不变：单组件库自动备份重建，多组件库需手动删除该组件或换用新库路径。
 - **v16 SchLib 重名引脚隐藏 Name**（`LCEDA2AD-v16-p150`）：
-  - 多个引脚使用同一个 Name 时（如多个 `NC` / `PGND` / `VAC`），只有第一个引脚显示
-    Name，后续同名引脚的 `ShowName` 设为 `False`，避免同一文字在符号上重复（引脚位置
+  - 多个引脚使用同一个 Name 时（如多个 `NC` / `PGND` / `VAC`），**所有**同名引脚的
+    `ShowName` 都设为 `False`（不是只保留一个），避免同一文字在符号上重复（引脚位置
     重叠时文字也会互相压住）；引脚编号（Designator）始终显示。
+  - 唯一名字的引脚不受影响，仍然显示 Name。
   - 判断在发射器中完成，`AddPin` 新增 `PShowName` 参数；Name 与 Designator 相同
     仍然隐藏 Name。
   - SchLib 版本标记升到 `LCEDA2AD-v16`（PcbLib 保持 `v14`），已有同名组件按版本

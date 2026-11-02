@@ -35,8 +35,9 @@ const KNOWN_STEPS = ['schlib_part', 'schlib', 'pcblib_part', 'pcblib'];
 // component_shape primitive are no longer drawn. v15 (SCH): every generated
 // SchLib component also carries a hidden "立创编号" parameter holding its LCSC
 // number, so a SchLib written by an older emitter must be redrawn. v16 (SCH):
-// pin names that duplicate an earlier pin's name are hidden the same way a
-// designator-equal name is, so repeated text no longer stacks on the symbol.
+// every pin sharing a duplicated name hides its name (the same way a
+// designator-equal name is hidden), so repeated text no longer stacks on the
+// symbol.
 const PIN_SUFFIX = '-p' + (process.env.PIN_LENGTH_MIL || 150);
 export const LIB_MARKER_SCH = 'LCEDA2AD-v16' + PIN_SUFFIX;
 export const LIB_MARKER_PCB = 'LCEDA2AD-v14' + PIN_SUFFIX;
@@ -282,22 +283,20 @@ export function buildSymbolBody(model, lcsc) {
     }
   }
   // Pin name visibility. Altium prints the name inside the body, so hide it
-  // when it would only repeat the designator or when another pin already shows
-  // the same name (duplicate names overlap visually). The first pin of each
-  // duplicate group keeps the name, later ones hide it.
+  // when it would only repeat the designator or when several pins share the
+  // same name: then every pin with that name hides it (duplicate names paint
+  // overlapping text), not just the later ones.
   const nameCounts = new Map();
   for (const pin of sym.pins || []) {
     const name = String(pin.name || '~');
     nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
   }
-  const shownNames = new Set();
   for (const pin of sym.pins || []) {
     const p = libPinPlacement(pin);
     const num = String(pin.number == null ? '' : pin.number);
     const name = String(pin.name || '~');
     const duplicated = (nameCounts.get(name) || 0) > 1;
-    const showName = num !== name && !(duplicated && shownNames.has(name));
-    if (showName) shownNames.add(name);
+    const showName = num !== name && !duplicated;
     out.push('    AddPin(Target, ' + quote(pin.number) + ', ' + quote(pin.name || '~') + ', '
       + [p.x, p.y, pin.length, p.orient].map(int).join(', ') + ', '
       + quote(String(pin.electrical || 'passive').toLowerCase()) + ', '
