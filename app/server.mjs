@@ -428,6 +428,11 @@ function handlePipelineLine(job, line) {
 
   if (/^model: /.test(trimmed)) {
     setStep(job, '获取元件数据并生成文档', 'running', trimmed.slice(0, 160));
+  } else if (/^PCB REUSE\b/.test(trimmed)) {
+    // 目标 PcbLib 已有该封装：管线直接复用，不重画。界面在 PcbLib 进度处标注「复用」。
+    // 若复用后发现旧封装是空组件，管线会重画一次并发出 CANCELLED 行撤销标注。
+    job.pcbReuse = !/CANCELLED/i.test(trimmed);
+    if (job.pcbReuse) setStep(job, 'Altium 脚本 PcbLib', 'running', '复用目标库已有封装（不重画）');
   } else if (/^P1 source=easyeda-api/.test(trimmed)) {
     const sch = trimmed.match(/sch=(\d+)B/);
     const pcb = trimmed.match(/pcb=(\d+)B/);
@@ -438,8 +443,12 @@ function handlePipelineLine(job, line) {
     const m = trimmed.match(/^STAGE (\w+) ok=(true|false)(?:.*elapsed=(\d+)ms)?/);
     const name = STAGE_STEP[m[1]] || ('Altium 阶段 ' + m[1]);
     const okStage = m[2] === 'true';
+    const elapsed = m[3] ? '耗时 ' + (Number(m[3]) / 1000).toFixed(0) + ' 秒' : '完成';
+    const reused = okStage && /^pcblib/.test(m[1]) && job.pcbReuse === true;
     setStep(job, name, okStage ? 'ok' : 'error',
-      okStage ? (m[3] ? '耗时 ' + (Number(m[3]) / 1000).toFixed(0) + ' 秒' : '完成') : '该阶段失败，见日志');
+      okStage
+        ? (reused ? '复用目标库已有封装，未重画 · ' + elapsed : elapsed)
+        : '该阶段失败，见日志');
   } else if (/^RESULT: FAILED at stage (\w+)/.test(trimmed)) {
     const stage = trimmed.match(/^RESULT: FAILED at stage (\w+)/)[1];
     const name = STAGE_STEP[stage] || ('Altium 阶段 ' + stage);
@@ -665,7 +674,8 @@ async function runBuildJob(job) {
     logLine(job, '本次输出目录：' + job.paths.outDir);
     logLine(job, '本次原理图库：' + job.paths.schLib);
     logLine(job, '本次封装库  ：' + job.paths.pcbLib);
-    logLine(job, '覆盖目标库同名元件：' + (job.overwrite ? '是（界面选择覆盖）' : '否（已存在时幂等跳过）'));
+    logLine(job, '覆盖目标 SchLib 同名元件：' + (job.overwrite ? '是（界面选择覆盖）' : '否（已存在时幂等跳过）')
+      + '；PcbLib 已有同名封装时直接复用，不重画');
     if (job.fields) {
       const shown = ['designItemId', 'designator', 'comment', 'description']
         .filter((k) => typeof job.fields[k] === 'string')
@@ -1140,7 +1150,10 @@ function buildDuplicateReport(lcsc, paths, fields, model) {
       matches: pcbMatches, duplicate: pcbDuplicate,
       canOverwrite: true, reason: '',
     },
-    hasDuplicate: schDuplicate || pcbDuplicate,
+    // 只有 SchLib 重复需要用户决定（覆盖 / 终止）。PcbLib 重复不弹窗：
+    // 管线直接复用目标库里已有的封装，不重画（用户要求）。
+    hasDuplicate: schDuplicate,
+    pcbReuse: pcbDuplicate,
   };
 }
 
@@ -1169,7 +1182,7 @@ async function apiCheckDuplicate(req, res) {
   }
   const report = buildDuplicateReport(lcsc, requested, fields, model);
   console.log('[check-duplicate] ' + lcsc + ' schlib=' + (report.schlib.duplicate ? 'dup' : '-')
-    + ' pcblib=' + (report.pcblib.duplicate ? 'dup' : '-')
+    + ' pcblib=' + (report.pcblib.duplicate ? 'reuse' : '-')
     + ' canOverwrite=' + (report.schlib.canOverwrite && report.pcblib.canOverwrite));
   return sendJson(res, { ok: true, query, paths: requested, ...report });
 }

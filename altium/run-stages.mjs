@@ -452,12 +452,15 @@ async function main() {
     && (namesPresent(LIB_SCH, schNameCandidates).length > 0 || namesPresent(LIB_SCH, [LCSC]).length > 0);
   const schCurrent = !OVERWRITE && versions[LIB_SCH] === LIB_MARKER_SCH && fs.existsSync(LIB_SCH)
     && namesPresent(LIB_SCH, [libName]).length > 0 && !schFieldStale;
-  const pcbCurrent = !OVERWRITE && versions[LIB_PCB] === LIB_MARKER_PCB && fs.existsSync(LIB_PCB)
-    && !!pkg && namesPresent(LIB_PCB, [pkg]).length > 0;
+  // 目标 PcbLib 里已有同名封装 => 一律复用：不重画、不替换（界面也不再为此弹窗）。
+  // 旧版本标记（LIB_MARKER_PCB）不再触发重画；OVERWRITE 只作用于 SchLib。
+  const pcbHasComp = !!pkg && fs.existsSync(LIB_PCB) && namesPresent(LIB_PCB, [pkg]).length > 0;
+  const pcbCurrent = pcbHasComp;
+  let pcbReused = pcbHasComp;
   log('LIB VERSION schlib=' + (versions[LIB_SCH] || '(none)') + ' current=' + schCurrent
     + (OVERWRITE ? ' overwrite=1' : ''));
   log('LIB VERSION pcblib=' + (versions[LIB_PCB] || '(none)') + ' current=' + pcbCurrent
-    + (OVERWRITE ? ' overwrite=1' : ''));
+    + (pcbReused ? ' reuse=1' : '') + (OVERWRITE ? ' overwrite=1' : ''));
   const schNames = Array.from(new Set([...(registry[LIB_SCH] || []), ...schNameCandidates, LCSC]));
   const pcbNames = Array.from(new Set([...(registry[LIB_PCB] || []), pkg]));
   const sizeOf = (p) => (fs.existsSync(p) ? fs.statSync(p).size : 0);
@@ -470,15 +473,10 @@ async function main() {
   log('LIB BEFORE schlib target=' + LIB_SCH + ' bytes=' + before.sch.bytes + ' comps=[' + before.sch.names.join(',') + ']');
   log('LIB BEFORE pcblib target=' + LIB_PCB + ' bytes=' + before.pcb.bytes + ' comps=[' + before.pcb.names.join(',') + ']');
 
-  // A footprint written by an older emitter has fewer primitives (no rotated pads,
-  // no NPTH holes, no silk arcs). Unlike SchLib, the PcbLib API can remove a single
-  // component, so rewrite just that component instead of silently keeping the old
-  // drawing. Without this the version marker would report "stale" but never refresh.
-  const forceStalePcb = (OVERWRITE || !pcbCurrent) && !!pkg && before.pcb.names.includes(pkg);
-  if (forceStalePcb) {
-    log(OVERWRITE
-      ? 'PCB OVERWRITE: ' + pkg + ' exists in the target library; it will be removed and redrawn (UI choice)'
-      : 'PCB STALE: ' + pkg + ' predates ' + LIB_MARKER_PCB + '; it will be removed and redrawn');
+  // 已有同名封装时一律复用，不重画：即使它的版本标记比当前发射器旧，也保留用户
+  // 手里的封装。想换掉它，请在 Altium 里删除该封装后重新生成。
+  if (pcbReused) {
+    log('PCB REUSE: ' + pkg + ' already exists in the target PcbLib; reusing the existing footprint (no redraw)');
   }
 
   // When the target already contains this part but it predates the current
@@ -518,7 +516,8 @@ async function main() {
     const res = await runAltiumStage(stage, docModel, stageOut, {
       schLibCurrent: schCurrent,
       pcbLibCurrent: pcbCurrent,
-      forcePcbLib: stage === 'pcblib' && forceStalePcb,
+      // PcbLib 已有同名封装时绝不重画（forcePcbLib 只在空封装修复时由下方单独传 true）。
+      forcePcbLib: false,
       replaceExisting: stage === 'schlib' && schNeedsReplace,
       previousName,
     });
@@ -528,6 +527,8 @@ async function main() {
       const padOk = checkPcbLib(LIB_PCB, pkg, 'target PcbLib');
       if (padOk === false && /idempotent skip/.test(String(res.log))) {
         // The target already had this name but its saved component was empty.
+        pcbReused = false;
+        log('PCB REUSE CANCELLED: existing "' + pkg + '" is an empty component; redrawing it once');
         log('PADCHECK target PcbLib: existing component is empty; rewriting it once');
         const res2 = await runAltiumStage('pcblib', docModel, OUT_DIR, { forcePcbLib: true });
         results.push(res2);
@@ -721,6 +722,7 @@ async function main() {
     componentDir: keepIntermediateDir ? componentDir : null,
     options: { keepDocs: KEEP_DOCS, makePartLibs: MAKE_PART_LIBS },
     fields: effectiveFields,
+    pcbReused,
     counts: { schPins: docModel.symbol.pins.length, pcbPads: docModel.footprint.pads.length },
     source: docSource,
     artifacts,

@@ -569,7 +569,7 @@ function renderDuplicateList(report) {
       const ok = document.createElement('div');
       ok.className = 'dup-ok';
       ok.textContent = title.indexOf('PcbLib') >= 0
-        ? '将删除旧封装并重画。'
+        ? '将直接复用目标库已有封装，不重画。'
         : '将只删除同名元件并重画，库里其它元件不动。';
       wrap.appendChild(ok);
     }
@@ -585,7 +585,7 @@ function renderDuplicateList(report) {
   el.dupHint.className = blocked ? 'error' : 'hint';
   el.dupHint.textContent = blocked
     ? '「覆盖」不可用：请先在 Altium 里手动处理该元件，或换一个库。'
-    : '「覆盖」只会删除目标库里的同名元件并重画，其它元件不动；「终止」不会写入任何文件。';
+    : '「覆盖」只会删除 SchLib 里的同名元件并重画，其它元件不动；PcbLib 已有同名封装一律复用，不重画；「终止」不会写入任何文件。';
 }
 
 function closeDuplicateModal() {
@@ -642,6 +642,9 @@ async function doBuild() {
         return;
       }
       overwrite = true;
+    } else if (check && check.pcbReuse) {
+      // PcbLib 已有同名封装：不弹窗、不终止，管线会直接复用原封装。
+      setJobHint('PcbLib 已有同名封装：将直接复用，不重画。');
     }
   } catch (err) {
     setJobHint('重复检查未完成：' + (err && err.message ? err.message : err) + '；将按普通流程继续。');

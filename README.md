@@ -7,7 +7,8 @@
    `<输出目录>\<C编号>_SCH.SchDoc` 与 `<C编号>_PCB.PcbDoc`（只读副本在 `_source\`）；
 3. 回读解析这两个文档，校验引脚/焊盘数量；
 4. 用 **Altium 脚本 API（DelphiScript）**生成 `SchLib` / `PcbLib`，并追加到指定的
-   `.SchLib` / `.PcbLib`（不存在自动新建；同名时先提示，由界面选择覆盖或终止）；
+   `.SchLib` / `.PcbLib`（不存在自动新建；SchLib 同名时先提示，由界面选择覆盖或终止；
+   PcbLib 同名时不弹窗，直接复用已有封装，不重画）；
 5. 复核库内名称与数量，输出 `RESULT: PASS` / `RESULT_JSON`。
 
 > **全程没有浏览器、没有登录、没有 UIA、没有鼠标点击。**
@@ -365,11 +366,14 @@ jobs\_lib-registry.json            内部版本登记表
   3D Body（`SVGNODE`）不重建。椭圆丝印弧用 10° 采样折线近似。
   中间产物 PcbDoc 目前不写 Region 记录（PcbLib 里有完整填充区），因此单独打开
   PcbDoc 时看不到外形/钢网填充。
-- 目标库里已有同名元件时，生成前会先检查并弹窗：选「覆盖」强制重画，选「终止」不写入任何文件。
-  SchLib 覆盖用 `ISch_Lib.RemoveSchComponent` **只删除同名元件**（新 Design Item ID、旧 ID、LCSC 三种候选），
+- 目标 **SchLib** 里已有同名元件时，生成前会先检查并弹窗：选「覆盖」强制重画，选「终止」不写入任何文件。
+  覆盖用 `ISch_Lib.RemoveSchComponent` **只删除同名元件**（新 Design Item ID、旧 ID、LCSC 三种候选），
   再重画；目标库里的其它元件不会被动到。管线还会在保存后对比库头部：除同名元件和空白占位外，
-  任何其它组件消失都会判作业失败。PcbLib 同样只删除同名封装后重画。
+  任何其它组件消失都会判作业失败。
   替换前会在目标库旁生成 `.bak-时间戳` 文件级备份；显式「覆盖」留下的备份会保留便于回滚。
+- 目标 **PcbLib** 里已有同名封装时**不弹窗、不重画**：直接复用已有封装（进度面板的
+  「Altium 脚本 PcbLib」会标注「复用目标库已有封装，未重画」）。想换掉旧封装，请在 Altium 里
+  删除该封装后重新生成。（唯一例外：旧封装是空组件时，管线会重画一次修复。）
 - 进度卡住或失败时，进度卡片右上角提供「刷新」（重新读取作业状态；页面刷新后也会按
   `/api/health` 的 `activeJobId` 自动接回运行中的作业）与「重置」（运行中先终止管线，
   再清空进度面板和日志）。
@@ -459,7 +463,8 @@ jobs\_lib-registry.json            内部版本登记表
 - `ALLOW_UNSAVED=1`：跳过“Altium 有未保存文档”的检查（默认禁止；仍不会关闭 Altium）
 - `KEEP_DOCS=1` / `MAKE_PART_LIBS=1`：保留 SchDoc/PcbDoc / 生成单件库
   （服务端按页面勾选传入；CLI 可直接设置）
-- `OVERWRITE=1`：强制重画目标库里的同名元件（服务端在重复对话框选择「覆盖」时传入）
+- `OVERWRITE=1`：强制重画目标 SchLib 里的同名元件（服务端在 SchLib 重复对话框选择「覆盖」时传入；
+  不影响 PcbLib——PcbLib 已有同名封装时始终复用）
 - `CANCEL_FILE=<路径>`：取消哨兵；文件出现时管线会杀掉自己启动的 Altium 并退出
   （服务端「重置」按钮使用）
 - `ALLOW_FIXTURE=1`：仅调试，使用 `test/tmp-out` 离线数据
